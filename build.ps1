@@ -1,4 +1,4 @@
-# Builds DeskNotes with the C# compiler that ships with Windows (.NET Framework 4.x) — nothing to install.
+﻿# Builds DeskNotes with the C# compiler that ships with Windows (.NET Framework 4.x) — nothing to install.
 # Usage:  .\build.ps1            -> bin\DeskNotes.exe and bin\DeskNotes-Setup.exe
 #         .\build.ps1 -Install   -> also replaces the running copy in %LOCALAPPDATA%\Programs\DeskNotes
 #         .\build.ps1 -Release   -> also publishes bin\DeskNotes-Setup.exe as a GitHub release (needs the gh CLI)
@@ -32,7 +32,7 @@ Set-Content "$app.config" $config -Encoding utf8
 # the installer, with the app embedded inside it
 & "$fw\csc.exe" /nologo /codepage:65001 /target:winexe /platform:anycpu /optimize+ /debug- /win32icon:$icon `
     /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll `
-    /resource:"$app,DeskNotes.exe" /out:$setup (Join-Path $root "installer\Setup.cs")
+    /resource:"$app,DeskNotes.exe" /resource:"$root\assets\fonts\Caveat.ttf,Caveat.ttf" /out:$setup (Join-Path $root "installer\Setup.cs")
 if ($LASTEXITCODE) { throw "Installer build failed" }
 Write-Host ("Built {0} and {1} ({2:N0} KB)" -f $app, $setup, ((Get-Item $setup).Length / 1KB))
 

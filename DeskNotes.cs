@@ -33,8 +33,8 @@ using RectShape = System.Windows.Shapes.Rectangle;
 [assembly: System.Reflection.AssemblyTitle("DeskNotes")]
 [assembly: System.Reflection.AssemblyProduct("DeskNotes")]
 [assembly: System.Reflection.AssemblyDescription("Рисованный стикер на рабочем столе")]
-[assembly: System.Reflection.AssemblyVersion("2.2.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("2.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("2.2.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("2.2.1.0")]
 
 // ---------------- data ----------------
 [DataContract] class Sub

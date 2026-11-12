@@ -17,12 +17,12 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Установка DeskNotes")]
 [assembly: AssemblyProduct("DeskNotes")]
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyVersion("2.2.1.0")]
+[assembly: AssemblyFileVersion("2.2.1.0")]
 
 class Setup : Form
 {
-    const string Version = "2.2.0";
+    const string Version = "2.2.1";
     const string VoskLibUrl = "https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip";
     const string VoskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip";
     // SHA-256 of the downloads: a swapped or truncated file is rejected before anything is unpacked.
@@ -156,6 +156,14 @@ class Setup : Form
             "  <runtime><gcConcurrent enabled=\"false\"/></runtime>\r\n</configuration>\r\n");
         string me = Application.ExecutablePath, uninstaller = Path.Combine(InstallDir, "Uninstall.exe");
         if (!string.Equals(me, uninstaller, StringComparison.OrdinalIgnoreCase)) File.Copy(me, uninstaller, true);
+
+        // the handwriting font the sticker uses by default (Caveat, SIL Open Font License);
+        // an existing copy, or one the user put there under another name, is left alone
+        string fonts = Path.Combine(DataDir, "fonts");
+        Directory.CreateDirectory(fonts);
+        if (!Directory.EnumerateFiles(fonts).Any(f => Path.GetFileName(f).IndexOf("caveat", StringComparison.OrdinalIgnoreCase) >= 0))
+            using (var res = Assembly.GetExecutingAssembly().GetManifestResourceStream("Caveat.ttf"))
+            using (var f = File.Create(Path.Combine(fonts, "Caveat.ttf"))) res.CopyTo(f);
 
         if (voice) InstallVoice();
 
