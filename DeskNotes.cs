@@ -15,6 +15,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -185,6 +186,8 @@ class Sticky : Window
         LocationChanged += delegate { cfg.X = Left; cfg.Y = Top; MarkDirty(); };
         SizeChanged += delegate { cfg.W = Width; cfg.H = Height; MarkDirty(); };
         PreviewKeyDown += OnKey;
+        EventManager.RegisterClassHandler(typeof(System.Windows.Controls.ContextMenu), System.Windows.Controls.ContextMenu.OpenedEvent, new RoutedEventHandler((s, e) => HideFromCapture((Visual)s)));
+        EventManager.RegisterClassHandler(typeof(System.Windows.Controls.ToolTip), System.Windows.Controls.ToolTip.OpenedEvent, new RoutedEventHandler((s, e) => HideFromCapture((Visual)s)));
         Closing += delegate { Flush(); };
     }
 
@@ -247,6 +250,7 @@ class Sticky : Window
     {
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         var tb = Keyboard.FocusedElement as TextBox;
+        if (e.Key == Key.Escape && tb != null && "popup".Equals(tb.Tag)) return; // the little popup closes itself
         if (e.Key == Key.Escape)
         {
             if (tb != null && "rename".Equals(tb.Tag)) { tb.Tag = "cancel"; RenderTabs(); }
@@ -937,6 +941,41 @@ class Sticky : Window
         if ((f & FH) != 0) el.Background = B(cfg.TagColors.Count > 1 ? cfg.TagColors[1] : "#FFB020", 105);
     }
 
+    // named links are stored as [название](https://...), bare addresses stay as they are
+    static readonly Regex NamedLinkRe = new Regex(@"\[([^\]\n]+)\]\(((?:https?://|www\.)[^)\s]+)\)", RegexOptions.IgnoreCase);
+
+    // (index, length, label or null for a bare address, url) — in order, never overlapping
+    static List<Tuple<int, int, string, string>> FindLinks(string text)
+    {
+        var res = new List<Tuple<int, int, string, string>>();
+        int pos = 0;
+        foreach (Match nm in NamedLinkRe.Matches(text))
+        {
+            AddBare(text, pos, nm.Index, res);
+            res.Add(Tuple.Create(nm.Index, nm.Length, nm.Groups[1].Value, nm.Groups[2].Value));
+            pos = nm.Index + nm.Length;
+        }
+        AddBare(text, pos, text.Length, res);
+        return res;
+    }
+
+    static void AddBare(string text, int from, int to, List<Tuple<int, int, string, string>> res)
+    {
+        if (to <= from) return;
+        foreach (Match m in UrlRe.Matches(text.Substring(from, to - from)))
+        {
+            string u = CleanUrl(m.Value);
+            res.Add(Tuple.Create(from + m.Index, u.Length, (string)null, u));
+        }
+    }
+
+    static Uri ToUri(string url)
+    {
+        if (url.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) url = "https://" + url;
+        Uri u;
+        return Uri.TryCreate(url, UriKind.Absolute, out u) ? u : null;
+    }
+
     // read-only display (list rows, previews): formatting + Ctrl+click links
     void AddInlines(InlineCollection target, string md)
     {
@@ -944,19 +983,28 @@ class Sticky : Window
         {
             string text = sg.Item1;
             int pos = 0;
-            foreach (Match m in UrlRe.Matches(text))
+            foreach (var l in FindLinks(text))
             {
-                string u = CleanUrl(m.Value);
-                if (m.Index > pos) AddText(target, text.Substring(pos, m.Index - pos), sg.Item2);
-                var link = new Hyperlink(new Run(u)) { Foreground = LinkBrush, ToolTip = "Ctrl+клик — открыть", Cursor = Cursors.Hand };
+                if (l.Item1 > pos) AddText(target, text.Substring(pos, l.Item1 - pos), sg.Item2);
+                var link = new Hyperlink(new Run(l.Item3 ?? l.Item4)) { Foreground = LinkBrush, Cursor = Cursors.Hand,
+                    ToolTip = (l.Item3 != null ? l.Item4 + "\n" : "") + "Ctrl+клик — открыть" };
                 StyleInline(link, sg.Item2);
-                string url = u;
+                string url = l.Item4;
                 link.PreviewMouseLeftButtonDown += (s, e) => { if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) { e.Handled = true; OpenUrl(url); } };
                 target.Add(link);
-                pos = m.Index + u.Length;
+                pos = l.Item1 + l.Item2;
             }
             if (pos < text.Length) AddText(target, text.Substring(pos), sg.Item2);
         }
+    }
+
+    Hyperlink EditorLink(string label, string url, int flags)
+    {
+        var run = new Run(label);
+        StyleInline(run, flags);
+        var h = new Hyperlink(run) { Foreground = LinkBrush, ToolTip = url + "\nCtrl+клик — открыть, правый клик — показать или переименовать" };
+        h.NavigateUri = ToUri(url);
+        return h;
     }
 
     void AddText(InlineCollection target, string text, int f)
@@ -986,12 +1034,12 @@ class Sticky : Window
                 if (i > 0) { para = new Paragraph { Margin = new Thickness(0) }; doc.Blocks.Add(para); }
                 if (lines[i].Length == 0) continue;
                 int pos = 0;
-                foreach (Match m in UrlRe.Matches(lines[i]))
+                foreach (var l in FindLinks(lines[i]))
                 {
-                    string u = CleanUrl(m.Value);
-                    if (m.Index > pos) { var r0 = new Run(lines[i].Substring(pos, m.Index - pos)); StyleInline(r0, sg.Item2); para.Inlines.Add(r0); }
-                    var lr = new Run(u) { Foreground = LinkBrush }; StyleInline(lr, sg.Item2); para.Inlines.Add(lr);
-                    pos = m.Index + u.Length;
+                    if (l.Item1 > pos) { var r0 = new Run(lines[i].Substring(pos, l.Item1 - pos)); StyleInline(r0, sg.Item2); para.Inlines.Add(r0); }
+                    if (l.Item3 != null && ToUri(l.Item4) != null) para.Inlines.Add(EditorLink(l.Item3, l.Item4, sg.Item2));
+                    else { var lr = new Run(lines[i].Substring(l.Item1, l.Item2)) { Foreground = LinkBrush }; StyleInline(lr, sg.Item2); para.Inlines.Add(lr); }
+                    pos = l.Item1 + l.Item2;
                 }
                 if (pos < lines[i].Length) { var r = new Run(lines[i].Substring(pos)); StyleInline(r, sg.Item2); para.Inlines.Add(r); }
             }
@@ -1029,6 +1077,8 @@ class Sticky : Window
         {
             var tp = rtb.GetPositionFromPoint(pt, false);
             if (tp == null || tp.Paragraph == null) return null;
+            var hl = LinkAt(tp);
+            if (hl != null) return hl.NavigateUri != null ? hl.NavigateUri.OriginalString : null;
             string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
             return UrlAt(text, new TextRange(tp.Paragraph.ContentStart, tp).Text.Length);
         };
@@ -1069,16 +1119,34 @@ class Sticky : Window
         foreach (var x in inlines)
         {
             if (x is LineBreak) { segs.Add(Tuple.Create("\n", 0)); continue; }
+            var hl = x as Hyperlink;
+            if (hl != null)
+            {
+                string label = new TextRange(hl.ContentStart, hl.ContentEnd).Text.Replace("[", "(").Replace("]", ")");
+                var firstRun = hl.Inlines.OfType<Run>().FirstOrDefault();
+                if (label.Trim().Length == 0) continue; // the name was erased -> drop the link
+                if (hl.NavigateUri == null) { segs.Add(Tuple.Create(label, firstRun != null ? RunFlags(firstRun, baseWeight) : 0)); continue; }
+                segs.Add(Tuple.Create("[" + label + "](" + hl.NavigateUri.OriginalString + ")", firstRun != null ? RunFlags(firstRun, baseWeight) : 0));
+                continue;
+            }
             var sp = x as Span;
             if (sp != null) { Collect(sp.Inlines, segs, baseWeight); continue; }
             var r = x as Run;
             if (r == null) continue;
+            segs.Add(Tuple.Create(r.Text, RunFlags(r, baseWeight)));
+        }
+    }
+
+    static int RunFlags(Run r, FontWeight baseWeight)
+    {
+        {
             int f = 0;
             if (r.FontWeight.ToOpenTypeWeight() >= 600 && baseWeight.ToOpenTypeWeight() < 600) f |= FB;
             if (r.FontStyle == FontStyles.Italic) f |= FI;
             for (DependencyObject d = r; d is Inline; d = ((Inline)d).Parent)
             {
                 var inl = (Inline)d;
+                if (inl is Hyperlink) continue; // the link's own underline isn't user formatting
                 if (inl.TextDecorations != null)
                     foreach (var td in inl.TextDecorations)
                     {
@@ -1087,8 +1155,92 @@ class Sticky : Window
                     }
                 if (inl.Background != null) f |= FH;
             }
-            segs.Add(Tuple.Create(r.Text, f));
+            return f;
         }
+    }
+
+    static Hyperlink LinkAt(TextPointer tp)
+    {
+        for (DependencyObject d = tp == null ? null : tp.Parent; d is TextElement; d = ((TextElement)d).Parent)
+            if (d is Hyperlink) return (Hyperlink)d;
+        return null;
+    }
+
+    // TextPointer for the n-th visible character of a paragraph (offsets in TextPointer count element tags too)
+    static TextPointer At(Paragraph p, int n)
+    {
+        var tp = p.ContentStart;
+        while (tp != null && tp.CompareTo(p.ContentEnd) < 0)
+        {
+            if (tp.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+            {
+                int len = tp.GetTextRunLength(LogicalDirection.Forward);
+                if (n <= len) return tp.GetPositionAtOffset(n);
+                n -= len;
+                tp = tp.GetPositionAtOffset(len);
+            }
+            else tp = tp.GetNextContextPosition(LogicalDirection.Forward);
+        }
+        return p.ContentEnd;
+    }
+
+    // the bare address the user selected, or the one the caret stands in
+    static TextRange BareUrlRange(RichTextBox rtb)
+    {
+        var sel = rtb.Selection;
+        if (LinkAt(sel.Start) != null) return null;
+        var p = sel.Start.Paragraph;
+        if (p == null) return null;
+        string text = new TextRange(p.ContentStart, p.ContentEnd).Text;
+        int idx = new TextRange(p.ContentStart, sel.Start).Text.Length;
+        foreach (var l in FindLinks(text))
+            if (l.Item3 == null && idx >= l.Item1 && idx <= l.Item1 + l.Item2)
+                return new TextRange(At(p, l.Item1), At(p, l.Item1 + l.Item2));
+        return null;
+    }
+
+    void HideLink(RichTextBox rtb, TextRange range)
+    {
+        string url = range.Text.Trim();
+        AskText(rtb, "Как подписать ссылку?", "", label =>
+        {
+            range.Text = "";
+            var h = new Hyperlink(new Run(label), range.Start) // inserted right where the address was
+            {
+                Foreground = LinkBrush, NavigateUri = ToUri(url),
+                ToolTip = url + "\nCtrl+клик — открыть, правый клик — показать или переименовать"
+            };
+            rtb.CaretPosition = h.ElementEnd;
+        });
+    }
+
+    void AskText(RichTextBox rtb, string prompt, string initial, Action<string> done)
+    {
+        var tb = HandBox(initial, fs * .8, false);
+        tb.Tag = "popup"; tb.MinWidth = 200;
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock { Text = prompt + "  (Enter — готово, Esc — отмена)", FontSize = fs * .6, Opacity = .6, Margin = new Thickness(0, 0, 0, 4) });
+        panel.Children.Add(tb);
+        var border = new Border { Background = paperBr, BorderBrush = InkA(120), BorderThickness = new Thickness(1), Padding = new Thickness(10, 6, 10, 8), CornerRadius = new CornerRadius(4), Child = panel };
+        TextElement.SetFontFamily(border, font);
+        TextElement.SetForeground(border, ink);
+        var rect = rtb.CaretPosition.GetCharacterRect(LogicalDirection.Forward);
+        var pop = new Popup { Child = border, PlacementTarget = rtb, Placement = PlacementMode.Bottom, PlacementRectangle = rect, StaysOpen = false, AllowsTransparency = true };
+        pop.Opened += delegate { HideFromCapture(border); };
+        tb.KeyDown += (s, e) =>
+        {
+            if (e.Key == Key.Enter && tb.Text.Trim().Length > 0) { e.Handled = true; pop.IsOpen = false; done(tb.Text.Trim()); rtb.Focus(); }
+            else if (e.Key == Key.Escape) { e.Handled = true; pop.IsOpen = false; rtb.Focus(); }
+        };
+        pop.IsOpen = true;
+        FocusLater(tb);
+    }
+
+    // context menus, tooltips and popups are separate little windows: keep them off streams too
+    void HideFromCapture(Visual v)
+    {
+        var src = PresentationSource.FromVisual(v) as HwndSource;
+        if (src != null && cfg.HideFromCapture) SetWindowDisplayAffinity(src.Handle, 0x11);
     }
 
     static void ToggleDecoration(RichTextBox rtb, TextDecorationLocation loc)
@@ -1138,17 +1290,42 @@ class Sticky : Window
         m.Items.Add(new MenuItem { Header = "Вырезать", Command = ApplicationCommands.Cut, CommandTarget = rtb });
         m.Items.Add(new MenuItem { Header = "Копировать", Command = ApplicationCommands.Copy, CommandTarget = rtb });
         m.Items.Add(new MenuItem { Header = "Вставить", Command = ApplicationCommands.Paste, CommandTarget = rtb });
-        var tp = rtb.CaretPosition;
-        if (tp != null && tp.Paragraph != null)
+        Func<string, Action, MenuItem> act = (h, a) => { var mi = new MenuItem { Header = h }; mi.Click += delegate { a(); }; return mi; };
+        var hl = LinkAt(rtb.Selection.Start);
+        var bare = BareUrlRange(rtb);
+        if (hl != null && hl.NavigateUri != null)
         {
-            string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
-            string url = UrlAt(text, new TextRange(tp.Paragraph.ContentStart, tp).Text.Length);
-            if (url != null)
+            string url = hl.NavigateUri.OriginalString;
+            m.Items.Add(new Separator());
+            m.Items.Add(act("Открыть ссылку   (Ctrl+клик)", () => OpenUrl(url)));
+            m.Items.Add(act("Переименовать ссылку…", () => AskText(rtb, "Новая подпись ссылки", new TextRange(hl.ContentStart, hl.ContentEnd).Text, label =>
             {
+                hl.Inlines.Clear();
+                hl.Inlines.Add(new Run(label));
+            })));
+            m.Items.Add(act("Показать адрес целиком", () => { new TextRange(hl.ElementStart, hl.ElementEnd).Text = url; }));
+            m.Items.Add(act("Копировать адрес", () => { try { Clipboard.SetText(url); } catch { } }));
+        }
+        else if (bare != null)
+        {
+            string url = bare.Text.Trim();
+            m.Items.Add(new Separator());
+            m.Items.Add(act("Открыть ссылку   (Ctrl+клик)", () => OpenUrl(url)));
+            m.Items.Add(act("Спрятать ссылку под текст…", () => HideLink(rtb, bare)));
+        }
+        else if (sel)
+        {
+            string clip = null;
+            try { if (Clipboard.ContainsText()) clip = Clipboard.GetText().Trim(); } catch { }
+            if (clip != null && clip.IndexOfAny(new[] { ' ', '\n' }) < 0 && ToUri(clip) != null && UrlRe.IsMatch(clip))
+            {
+                var range = new TextRange(rtb.Selection.Start, rtb.Selection.End);
+                string url = clip;
                 m.Items.Add(new Separator());
-                var open = new MenuItem { Header = "Открыть ссылку", InputGestureText = "Ctrl+клик" };
-                open.Click += delegate { OpenUrl(url); };
-                m.Items.Add(open);
+                m.Items.Add(act("Сделать ссылкой (адрес из буфера)", () =>
+                {
+                    new Hyperlink(range.Start, range.End) { Foreground = LinkBrush, NavigateUri = ToUri(url), ToolTip = url + "\nCtrl+клик — открыть" };
+                }));
             }
         }
         return m;
