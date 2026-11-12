@@ -1,3 +1,4 @@
 bin/
 *.exe
+!download/DeskNotes-Setup.exe
 *.tmp

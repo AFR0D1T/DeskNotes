@@ -30,6 +30,12 @@ using SPath = System.Windows.Shapes.Path;
 using Ellipse = System.Windows.Shapes.Ellipse;
 using RectShape = System.Windows.Shapes.Rectangle;
 
+[assembly: System.Reflection.AssemblyTitle("DeskNotes")]
+[assembly: System.Reflection.AssemblyProduct("DeskNotes")]
+[assembly: System.Reflection.AssemblyDescription("Рисованный стикер на рабочем столе")]
+[assembly: System.Reflection.AssemblyVersion("2.1.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("2.1.0.0")]
+
 // ---------------- data ----------------
 [DataContract] class Sub
 {
@@ -109,6 +115,25 @@ class Sticky : Window
     [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint a);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")] static extern bool SetProcessWorkingSetSize(IntPtr p, IntPtr min, IntPtr max);
+    [DllImport("kernel32.dll")] static extern bool SetProcessInformation(IntPtr p, int infoClass, ref PowerThrottling info, int size);
+    [StructLayout(LayoutKind.Sequential)] struct PowerThrottling { public uint Version, ControlMask, StateMask; }
+
+    static Geometry Frozen(string data) { var g = Geometry.Parse(data); g.Freeze(); return g; }
+    static readonly Geometry BoxGeo = Frozen(BOX), CheckGeo = Frozen(CHECK), ScribbleGeo = Frozen(SCRIBBLE);
+
+    // While the sticker is in the background (you're playing, working, streaming) the process runs at idle
+    // priority with Windows 11 "efficiency mode", so it never competes with anything. When you open it,
+    // it goes back to normal priority for snappy typing.
+    static void BackgroundMode(bool on)
+    {
+        try { System.Diagnostics.Process.GetCurrentProcess().PriorityClass = on ? System.Diagnostics.ProcessPriorityClass.Idle : System.Diagnostics.ProcessPriorityClass.Normal; } catch { }
+        try
+        {
+            var st = new PowerThrottling { Version = 1, ControlMask = 1, StateMask = on ? 1u : 0u }; // EXECUTION_SPEED = EcoQoS
+            SetProcessInformation(GetCurrentProcess(), 4, ref st, Marshal.SizeOf(typeof(PowerThrottling)));
+        }
+        catch { }
+    }
 
     const int HOTKEY_ID = 1, WM_HOTKEY = 0x0312;
     const uint SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
@@ -181,8 +206,9 @@ class Sticky : Window
         ApplyLook();
 
         SourceInitialized += OnSrcInit;
-        Loaded += delegate { SendToBottom(); TrimMemory(); };
-        Deactivated += delegate { SendToBottom(); Flush(); TrimMemory(); };
+        Loaded += delegate { SendToBottom(); BackgroundMode(true); TrimMemory(); };
+        Activated += delegate { BackgroundMode(false); };
+        Deactivated += delegate { SendToBottom(); Flush(); BackgroundMode(true); TrimMemory(); };
         LocationChanged += delegate { cfg.X = Left; cfg.Y = Top; MarkDirty(); };
         SizeChanged += delegate { cfg.W = Width; cfg.H = Height; MarkDirty(); };
         PreviewKeyDown += OnKey;
@@ -311,17 +337,23 @@ class Sticky : Window
         string n = ff.FamilyNames.Values.FirstOrDefault();
         return n ?? ff.Source.Split('#').Last();
     }
+    // checks one font directly instead of enumerating every installed font (that was slow and memory-hungry)
+    static bool HasSystemFont(string name)
+    {
+        GlyphTypeface g;
+        try { return new Typeface(name).TryGetGlyphTypeface(out g); } catch { return false; }
+    }
     List<string> AvailableFonts()
     {
         var res = CustomFonts().Select(FamName).Distinct().ToList();
         foreach (var n in new[] { "Ink Free", "Segoe Print", "Segoe Script", "Comic Sans MS", "Segoe UI" })
-            if (Fonts.SystemFontFamilies.Any(f => f.Source == n) && !res.Contains(n)) res.Add(n);
+            if (!res.Contains(n) && HasSystemFont(n)) res.Add(n);
         return res;
     }
     FontFamily ResolveFont(string name)
     {
         foreach (var ff in CustomFonts()) if (FamName(ff) == name) return ff;
-        if (Fonts.SystemFontFamilies.Any(f => f.Source == name)) return new FontFamily(name);
+        if (HasSystemFont(name)) return new FontFamily(name);
         return new FontFamily("Ink Free, Segoe Print");
     }
 
@@ -393,8 +425,8 @@ class Sticky : Window
         ink = B(cfg.Ink); paperBr = B(cfg.Paper);
         font = ResolveFont(cfg.Font); fs = cfg.FontSize;
         paper.Background = paperBr;
-        paper.Effect = cfg.Shadow > 0 ? new DropShadowEffect { BlurRadius = cfg.Shadow * 1.8, ShadowDepth = cfg.Shadow * .5, Direction = 270, Opacity = .5, Color = Colors.Black } : null;
         paper.RenderTransform = new RotateTransform(cfg.Rotation);
+        BuildShadow();
         TextElement.SetFontFamily(paper, font);
         TextElement.SetFontSize(paper, fs);
         TextElement.SetForeground(paper, ink);
@@ -404,12 +436,41 @@ class Sticky : Window
         RebuildAll();
     }
 
+    // Soft shadow from a few stacked translucent shapes. A blur effect looks the same but in software
+    // rendering it is recomputed on every keystroke; these layers cost almost nothing to draw.
+    void BuildShadow()
+    {
+        if (shadowHost == null)
+        {
+            shadowHost = new Grid { IsHitTestVisible = false, RenderTransformOrigin = new Point(.5, .5) };
+            root.Children.Insert(0, shadowHost);
+        }
+        shadowHost.Children.Clear();
+        shadowHost.RenderTransform = paper.RenderTransform;
+        if (cfg.Shadow <= 0) return;
+        const int layers = 6;
+        double spread = cfg.Shadow * .9, depth = cfg.Shadow * .45;
+        var shade = B("#000000", (byte)Math.Min(60, 14 + cfg.Shadow * 2.2));
+        for (int i = 0; i < layers; i++)
+        {
+            double k = spread * (i + 1) / layers;
+            shadowHost.Children.Add(new Border
+            {
+                Background = shade, Opacity = 1.0 / (i + 1.6),
+                CornerRadius = new CornerRadius(3 + k, 3 + k, 5 + k, 18 + k),
+                Margin = new Thickness(-k + 2, -k + depth, -k + 2, -k - depth)
+            });
+        }
+    }
+    Grid shadowHost;
+
     UIElement MakePin(string kind)
     {
         pinHost.HorizontalAlignment = HorizontalAlignment.Center;
         if (kind == "push")
         {
-            var g = new Grid { Width = 20, Height = 20, Margin = new Thickness(0, -12, 0, 0), Effect = new DropShadowEffect { BlurRadius = 5, ShadowDepth = 3, Direction = 300, Opacity = .45 } };
+            var g = new Grid { Width = 20, Height = 20, Margin = new Thickness(0, -12, 0, 0) };
+            g.Children.Add(new Ellipse { Fill = B("#000000", 70), Margin = new Thickness(2.5, 3.5, -2.5, -3.5) });
             g.Children.Add(new Ellipse { Fill = B("#D8433F") });
             g.Children.Add(new Ellipse { Fill = B("#FFFFFF", 110), Width = 6, Height = 6, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(4.5, 4, 0, 0) });
             return g;
@@ -455,12 +516,13 @@ class Sticky : Window
             sp.Children.Add(name);
             if (active)
             {
-                var line = new SPath { Data = Geometry.Parse(SCRIBBLE), Stretch = Stretch.Fill, Height = 4, Stroke = ink, StrokeThickness = 1.6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, Margin = new Thickness(0, -1, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+                var line = new SPath { Data = ScribbleGeo, Stretch = Stretch.Fill, Height = 4, Stroke = ink, StrokeThickness = 1.6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, Margin = new Thickness(0, -1, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
                 line.SetBinding(FrameworkElement.WidthProperty, new System.Windows.Data.Binding("ActualWidth") { Source = name });
                 sp.Children.Add(line);
             }
             sp.MouseLeftButtonDown += (s, e) => { e.Handled = true; if (e.ClickCount == 2) StartRename(idx); else SwitchTab(idx); };
-            sp.ContextMenu = TabMenu(idx);
+            sp.ContextMenu = new ContextMenu(); // built only when actually opened
+            sp.ContextMenuOpening += delegate { sp.ContextMenu = TabMenu(idx); };
             tabsPanel.Children.Add(sp);
         }
         var plus = new TextBlock { Text = "+", FontSize = fs * 1.05, Opacity = .4, Cursor = Cursors.Hand, ToolTip = "Новая вкладка" };
@@ -602,8 +664,8 @@ class Sticky : Window
     FrameworkElement MakeCheck(bool done, double size, Brush checkBr, double thick)
     {
         var c = new Canvas { Width = 20, Height = 20 };
-        c.Children.Add(new SPath { Data = Geometry.Parse(BOX), Stroke = ink, StrokeThickness = thick, StrokeLineJoin = PenLineJoin.Round });
-        if (done) c.Children.Add(new SPath { Data = Geometry.Parse(CHECK), Stroke = checkBr ?? ink, StrokeThickness = thick + .9, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round });
+        c.Children.Add(new SPath { Data = BoxGeo, Stroke = ink, StrokeThickness = thick, StrokeLineJoin = PenLineJoin.Round });
+        if (done) c.Children.Add(new SPath { Data = CheckGeo, Stroke = checkBr ?? ink, StrokeThickness = thick + .9, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round });
         return new Border { Background = Brushes.Transparent, Cursor = Cursors.Hand, Child = new Viewbox { Width = size, Height = size, Child = c } };
     }
 
@@ -685,7 +747,8 @@ class Sticky : Window
         row.Children.Add(tools);
         row.MouseEnter += delegate { hover.Visibility = Visibility.Visible; };
         row.MouseLeave += delegate { hover.Visibility = Visibility.Hidden; };
-        row.ContextMenu = ItemMenu(tab, it);
+        row.ContextMenu = new ContextMenu(); // built only when actually opened
+        row.ContextMenuOpening += delegate { row.ContextMenu = ItemMenu(tab, it); };
         return row;
     }
 
@@ -1556,7 +1619,7 @@ class Sticky : Window
         FocusLater(addBox);
         if (modelIdle == null)
         {
-            modelIdle = new DispatcherTimer { Interval = TimeSpan.FromMinutes(3) };
+            modelIdle = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) }; // the model takes ~400 MB: give it back quickly
             modelIdle.Tick += delegate
             {
                 modelIdle.Stop();
@@ -1862,11 +1925,14 @@ class Sticky : Window
     }
 
     // ---------------- storage ----------------
-    void MarkDirty() { saveTimer.Stop(); saveTimer.Start(); }
+    bool dirty;
+    void MarkDirty() { dirty = true; saveTimer.Stop(); saveTimer.Start(); }
 
     void Flush()
     {
         saveTimer.Stop();
+        if (!dirty) return; // nothing changed: no disk write every time the sticker loses focus
+        dirty = false;
         WriteJson(F("data.json"), store);
         WriteJson(F("settings.json"), cfg);
     }
