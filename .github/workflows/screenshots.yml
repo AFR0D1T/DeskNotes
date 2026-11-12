@@ -1,9 +1,13 @@
 # Builds DeskNotes, runs it with demo notes and saves README screenshots plus measured resource use.
-# Start it by hand from the Actions tab; download the "screenshots" artifact when it finishes.
+# Start it by hand from the Actions tab. The pictures land on the "screenshots" branch (docs/), to be
+# looked at and merged into main.
 name: Screenshots
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   screenshots:
@@ -16,7 +20,14 @@ jobs:
       - name: Screenshots and measurements
         shell: powershell
         run: .\tools\screenshots.ps1 -Out "$env:RUNNER_TEMP\shots"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: ${{ runner.temp }}/shots
+      - name: Push to the screenshots branch
+        shell: powershell
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B screenshots
+          New-Item -ItemType Directory -Force docs | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\shots\*" docs -Force
+          git add docs
+          git commit -m "Screenshots and measurements"
+          git push -f origin screenshots
