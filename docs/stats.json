@@ -1,0 +1,9 @@
+﻿{
+    "startup_s":  1.72,
+    "idle_cpu_ms_60s":  0,
+    "working_set_mb":  22,
+    "private_mb":  37.3,
+    "threads":  10,
+    "priority":  "Idle",
+    "exe_kb":  116
+}
