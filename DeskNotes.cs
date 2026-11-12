@@ -123,7 +123,7 @@ class Sticky : Window
     Store store; Cfg cfg;
     IntPtr hwnd, prevFg;
     Item expanded;
-    Run expandedRun;
+    Span expandedRun;
     TextBox focusAfter;
     string focusAfterKind;
     Tuple<Tab, int, Item> lastDeleted;
@@ -621,7 +621,8 @@ class Sticky : Window
         }
 
         var tb = new TextBlock { TextWrapping = TextWrapping.Wrap };
-        var run = new Run(it.Title);
+        var run = new Span();
+        AddInlines(run.Inlines, it.Title);
         if (tag != null)
         {
             if (cfg.TagStyle == "marker") run.Background = B(cfg.TagColors[it.Tag], 110);
@@ -646,7 +647,11 @@ class Sticky : Window
             {
                 string preview = Preview(it);
                 if (preview.Length > 0)
-                    sp.Children.Add(new TextBlock { Text = preview, FontSize = fs * .72, Opacity = .5, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, -2, 0, 2) });
+                {
+                    var pv = new TextBlock { FontSize = fs * .72, Opacity = .5, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, -2, 0, 2) };
+                    AddInlines(pv.Inlines, preview);
+                    sp.Children.Add(pv);
+                }
             }
             body = sp;
         }
@@ -742,15 +747,16 @@ class Sticky : Window
         };
         TextElement.SetFontSize(box, fs * .85);
 
-        var title = HandBox(it.Title, fs * .9, false);
-        title.FontWeight = FontWeights.Bold;
-        title.TextChanged += delegate { if (title.Text.Trim().Length > 0) { it.Title = title.Text; if (expandedRun != null) expandedRun.Text = it.Title; MarkDirty(); } };
-        box.Children.Add(Placeholder(title, "название"));
-
-        var details = HandBox(it.Details, fs * .85, true);
-        details.TextChanged += delegate { it.Details = details.Text; MarkDirty(); };
-        box.Children.Add(Placeholder(details, "подробности…"));
-        title.KeyDown += (s, e) => { if (e.Key == Key.Enter) { e.Handled = true; FocusLater(details); } };
+        RichTextBox title = null, details = null;
+        box.Children.Add(RichPlaceholder(title = RichBox(it.Title, fs * .9, false, FontWeights.Bold, md =>
+        {
+            if (PlainOf(md).Trim().Length == 0) return;
+            it.Title = md;
+            if (expandedRun != null) { expandedRun.Inlines.Clear(); AddInlines(expandedRun.Inlines, md); }
+            MarkDirty();
+        }), "название"));
+        box.Children.Add(RichPlaceholder(details = RichBox(it.Details, fs * .85, true, FontWeights.Normal, md => { it.Details = md; MarkDirty(); }), "подробности…  (выдели текст — правый клик для оформления)"));
+        title.PreviewKeyDown += (s, e) => { if (e.Key == Key.Enter) { e.Handled = true; FocusLater(details, true); } };
 
         var subs = new StackPanel { Margin = new Thickness(0, 2, 0, 0) };
         for (int i = 0; i < it.Subs.Count; i++)
@@ -805,7 +811,347 @@ class Sticky : Window
             Foreground = ink, CaretBrush = ink, SelectionBrush = ink, SelectionOpacity = .3, FocusVisualStyle = null,
             TextWrapping = TextWrapping.Wrap, AcceptsReturn = multiline, AcceptsTab = false
         };
+        t.PreviewMouseLeftButtonDown += (s, e) =>
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+            int idx = t.GetCharacterIndexFromPoint(e.GetPosition(t), true);
+            string url = UrlAt(t.Text, idx);
+            if (url != null) { e.Handled = true; OpenUrl(url); }
+        };
         return t;
+    }
+
+    // ---------------- links ----------------
+    static readonly Regex UrlRe = new Regex(@"(?:https?://|www\.)[^\s<>""']+", RegexOptions.IgnoreCase);
+
+    static string CleanUrl(string u) { return u.TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '»', '"', '\''); }
+
+    static string UrlAt(string text, int idx)
+    {
+        if (text == null || idx < 0) return null;
+        foreach (Match m in UrlRe.Matches(text))
+        {
+            string u = CleanUrl(m.Value);
+            if (idx >= m.Index && idx <= m.Index + u.Length) return u;
+        }
+        return null;
+    }
+
+    static void OpenUrl(string url)
+    {
+        if (url.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) url = "https://" + url;
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    }
+
+    Brush LinkBrush { get { return B(cfg.TagColors.Count > 3 ? cfg.TagColors[3] : "#4A90FF"); } }
+
+    // ---------------- formatting: a tiny markdown kept in data.json ----------------
+    // **bold**  *italic*  ~~strike~~  __underline__  ==marker==
+    const int FB = 1, FI = 2, FS = 4, FU = 8, FH = 16;
+    static readonly string[] Marks = { "**", "~~", "__", "==", "*" };
+    static readonly int[] MarkBits = { FB, FS, FU, FH, FI };
+
+    static List<Tuple<string, int>> ParseMd(string s)
+    {
+        var res = new List<Tuple<string, int>>();
+        var cur = new StringBuilder();
+        int flags = 0, i = 0;
+        s = s ?? "";
+        while (i < s.Length)
+        {
+            int k = -1;
+            for (int j = 0; j < Marks.Length; j++)
+                if (string.CompareOrdinal(s, i, Marks[j], 0, Marks[j].Length) == 0) { k = j; break; }
+            if (k >= 0)
+            {
+                string m = Marks[k];
+                bool on = (flags & MarkBits[k]) != 0, ok;
+                if (!on) ok = i + m.Length < s.Length && !char.IsWhiteSpace(s[i + m.Length]) && s.IndexOf(m, i + m.Length + 1, StringComparison.Ordinal) > 0;
+                else ok = i > 0 && !char.IsWhiteSpace(s[i - 1]);
+                if (ok)
+                {
+                    if (cur.Length > 0) { res.Add(Tuple.Create(cur.ToString(), flags)); cur.Clear(); }
+                    flags ^= MarkBits[k];
+                    i += m.Length;
+                    continue;
+                }
+            }
+            cur.Append(s[i]); i++;
+        }
+        if (cur.Length > 0) res.Add(Tuple.Create(cur.ToString(), flags));
+        return res;
+    }
+
+    static string PlainOf(string md) { return string.Concat(ParseMd(md).Select(x => x.Item1)); }
+
+    static string ToMd(List<Tuple<string, int>> segs)
+    {
+        var merged = new List<Tuple<string, int>>();
+        foreach (var sg in segs)
+        {
+            if (sg.Item1.Length == 0) continue;
+            if (merged.Count > 0 && merged[merged.Count - 1].Item2 == sg.Item2)
+                merged[merged.Count - 1] = Tuple.Create(merged[merged.Count - 1].Item1 + sg.Item1, sg.Item2);
+            else merged.Add(sg);
+        }
+        var order = new[] { FH, FB, FI, FU, FS };
+        var mark = new Dictionary<int, string> { { FH, "==" }, { FB, "**" }, { FI, "*" }, { FU, "__" }, { FS, "~~" } };
+        var sb = new StringBuilder();
+        foreach (var sg in merged)
+        {
+            // markers must hug the text, so leading/trailing spaces stay outside them
+            string t = sg.Item1;
+            if (sg.Item2 == 0 || t.Trim().Length == 0) { sb.Append(t); continue; }
+            foreach (var line in t.Split('\n').Select((v, n) => new { v, n }))
+            {
+                if (line.n > 0) sb.Append('\n');
+                string core = line.v.Trim();
+                if (core.Length == 0) { sb.Append(line.v); continue; }
+                int lead = line.v.Length - line.v.TrimStart().Length;
+                sb.Append(line.v.Substring(0, lead));
+                foreach (var b in order) if ((sg.Item2 & b) != 0) sb.Append(mark[b]);
+                sb.Append(core);
+                foreach (var b in order.Reverse()) if ((sg.Item2 & b) != 0) sb.Append(mark[b]);
+                sb.Append(line.v.Substring(lead + core.Length));
+            }
+        }
+        return sb.ToString();
+    }
+
+    void StyleInline(TextElement el, int f)
+    {
+        if ((f & FB) != 0) el.FontWeight = FontWeights.Bold;
+        if ((f & FI) != 0) el.FontStyle = FontStyles.Italic;
+        var inl = el as Inline;
+        if (inl != null && (f & (FS | FU)) != 0)
+        {
+            var d = new TextDecorationCollection();
+            if ((f & FS) != 0) d.Add(TextDecorations.Strikethrough);
+            if ((f & FU) != 0) d.Add(TextDecorations.Underline);
+            inl.TextDecorations = d;
+        }
+        if ((f & FH) != 0) el.Background = B(cfg.TagColors.Count > 1 ? cfg.TagColors[1] : "#FFB020", 105);
+    }
+
+    // read-only display (list rows, previews): formatting + Ctrl+click links
+    void AddInlines(InlineCollection target, string md)
+    {
+        foreach (var sg in ParseMd(md))
+        {
+            string text = sg.Item1;
+            int pos = 0;
+            foreach (Match m in UrlRe.Matches(text))
+            {
+                string u = CleanUrl(m.Value);
+                if (m.Index > pos) AddText(target, text.Substring(pos, m.Index - pos), sg.Item2);
+                var link = new Hyperlink(new Run(u)) { Foreground = LinkBrush, ToolTip = "Ctrl+клик — открыть", Cursor = Cursors.Hand };
+                StyleInline(link, sg.Item2);
+                string url = u;
+                link.PreviewMouseLeftButtonDown += (s, e) => { if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) { e.Handled = true; OpenUrl(url); } };
+                target.Add(link);
+                pos = m.Index + u.Length;
+            }
+            if (pos < text.Length) AddText(target, text.Substring(pos), sg.Item2);
+        }
+    }
+
+    void AddText(InlineCollection target, string text, int f)
+    {
+        var parts = text.Split('\n');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (i > 0) target.Add(new LineBreak());
+            if (parts[i].Length == 0) continue;
+            var r = new Run(parts[i]);
+            StyleInline(r, f);
+            target.Add(r);
+        }
+    }
+
+    // editable rich text box that saves itself back as the tiny markdown
+    RichTextBox RichBox(string md, double size, bool multiline, FontWeight baseWeight, Action<string> changed)
+    {
+        var doc = new FlowDocument { PagePadding = new Thickness(0), FontFamily = font, FontSize = size, Foreground = ink, FontWeight = baseWeight };
+        var para = new Paragraph { Margin = new Thickness(0) };
+        doc.Blocks.Add(para);
+        foreach (var sg in ParseMd(md))
+        {
+            var lines = sg.Item1.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0) { para = new Paragraph { Margin = new Thickness(0) }; doc.Blocks.Add(para); }
+                if (lines[i].Length == 0) continue;
+                int pos = 0;
+                foreach (Match m in UrlRe.Matches(lines[i]))
+                {
+                    string u = CleanUrl(m.Value);
+                    if (m.Index > pos) { var r0 = new Run(lines[i].Substring(pos, m.Index - pos)); StyleInline(r0, sg.Item2); para.Inlines.Add(r0); }
+                    var lr = new Run(u) { Foreground = LinkBrush }; StyleInline(lr, sg.Item2); para.Inlines.Add(lr);
+                    pos = m.Index + u.Length;
+                }
+                if (pos < lines[i].Length) { var r = new Run(lines[i].Substring(pos)); StyleInline(r, sg.Item2); para.Inlines.Add(r); }
+            }
+        }
+        var rtb = new RichTextBox
+        {
+            Document = doc, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0),
+            Foreground = ink, CaretBrush = ink, SelectionBrush = ink, SelectionOpacity = .3, FocusVisualStyle = null,
+            AcceptsReturn = multiline, AcceptsTab = false, FontFamily = font, FontSize = size, FontWeight = baseWeight,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+        bool loading = true;
+        rtb.TextChanged += delegate { if (!loading) changed(RichToMd(rtb, baseWeight)); };
+        loading = false;
+
+        // paste as plain text so the handwriting look survives
+        DataObject.AddPastingHandler(rtb, (s, e) =>
+        {
+            if (!e.DataObject.GetDataPresent(DataFormats.UnicodeText)) return;
+            string txt = (string)e.DataObject.GetData(DataFormats.UnicodeText);
+            if (!multiline) txt = txt.Replace("\r", " ").Replace("\n", " ");
+            var plain = new DataObject();
+            plain.SetData(DataFormats.UnicodeText, txt);
+            e.DataObject = plain;
+        });
+
+        rtb.PreviewKeyDown += (s, e) =>
+        {
+            bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0, shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+            if (ctrl && shift && e.Key == Key.X) { ToggleDecoration(rtb, TextDecorationLocation.Strikethrough); e.Handled = true; }
+            else if (ctrl && shift && e.Key == Key.H) { ToggleMarker(rtb); e.Handled = true; }
+            else if (ctrl && (e.Key == Key.E || e.Key == Key.L || e.Key == Key.R || e.Key == Key.J || e.Key == Key.OemOpenBrackets || e.Key == Key.OemCloseBrackets)) e.Handled = true; // no alignment / font-size tricks
+        };
+        rtb.PreviewMouseLeftButtonDown += (s, e) =>
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+            var tp = rtb.GetPositionFromPoint(e.GetPosition(rtb), true);
+            if (tp == null || tp.Paragraph == null) return;
+            string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
+            int idx = new TextRange(tp.Paragraph.ContentStart, tp).Text.Length;
+            string url = UrlAt(text, idx);
+            if (url != null) { e.Handled = true; OpenUrl(url); }
+        };
+        rtb.ContextMenu = new ContextMenu();
+        rtb.ContextMenuOpening += (s, e) => { rtb.ContextMenu = FormatMenu(rtb); };
+        return rtb;
+    }
+
+    string RichToMd(RichTextBox rtb, FontWeight baseWeight)
+    {
+        var segs = new List<Tuple<string, int>>();
+        bool first = true;
+        foreach (var block in rtb.Document.Blocks)
+        {
+            if (!first) segs.Add(Tuple.Create("\n", 0));
+            first = false;
+            var p = block as Paragraph;
+            if (p == null) { segs.Add(Tuple.Create(new TextRange(block.ContentStart, block.ContentEnd).Text, 0)); continue; }
+            Collect(p.Inlines, segs, baseWeight);
+        }
+        return ToMd(segs).TrimEnd('\n');
+    }
+
+    static void Collect(InlineCollection inlines, List<Tuple<string, int>> segs, FontWeight baseWeight)
+    {
+        foreach (var x in inlines)
+        {
+            if (x is LineBreak) { segs.Add(Tuple.Create("\n", 0)); continue; }
+            var sp = x as Span;
+            if (sp != null) { Collect(sp.Inlines, segs, baseWeight); continue; }
+            var r = x as Run;
+            if (r == null) continue;
+            int f = 0;
+            if (r.FontWeight.ToOpenTypeWeight() >= 600 && baseWeight.ToOpenTypeWeight() < 600) f |= FB;
+            if (r.FontStyle == FontStyles.Italic) f |= FI;
+            for (DependencyObject d = r; d is Inline; d = ((Inline)d).Parent)
+            {
+                var inl = (Inline)d;
+                if (inl.TextDecorations != null)
+                    foreach (var td in inl.TextDecorations)
+                    {
+                        if (td.Location == TextDecorationLocation.Strikethrough) f |= FS;
+                        if (td.Location == TextDecorationLocation.Underline) f |= FU;
+                    }
+                if (inl.Background != null) f |= FH;
+            }
+            segs.Add(Tuple.Create(r.Text, f));
+        }
+    }
+
+    static void ToggleDecoration(RichTextBox rtb, TextDecorationLocation loc)
+    {
+        var sel = rtb.Selection;
+        if (sel.IsEmpty) return;
+        var cur = sel.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection;
+        bool has = cur != null && cur.Any(d => d.Location == loc);
+        var next = new TextDecorationCollection();
+        if (cur != null) foreach (var d in cur) if (d.Location != loc) next.Add(d);
+        if (!has) next.Add(loc == TextDecorationLocation.Strikethrough ? TextDecorations.Strikethrough[0] : TextDecorations.Underline[0]);
+        sel.ApplyPropertyValue(Inline.TextDecorationsProperty, next);
+    }
+
+    void ToggleMarker(RichTextBox rtb)
+    {
+        var sel = rtb.Selection;
+        if (sel.IsEmpty) return;
+        bool has = sel.GetPropertyValue(TextElement.BackgroundProperty) is Brush;
+        sel.ApplyPropertyValue(TextElement.BackgroundProperty, has ? null : B(cfg.TagColors.Count > 1 ? cfg.TagColors[1] : "#FFB020", 105));
+    }
+
+    ContextMenu FormatMenu(RichTextBox rtb)
+    {
+        var m = new ContextMenu();
+        bool sel = !rtb.Selection.IsEmpty;
+        Func<string, string, Action, MenuItem> item = (h, g, a) =>
+        {
+            var mi = new MenuItem { Header = h, InputGestureText = g, IsEnabled = sel };
+            mi.Click += delegate { a(); rtb.Focus(); };
+            return mi;
+        };
+        m.Items.Add(item("Жирный", "Ctrl+B", () => EditingCommands.ToggleBold.Execute(null, rtb)));
+        m.Items.Add(item("Курсив", "Ctrl+I", () => EditingCommands.ToggleItalic.Execute(null, rtb)));
+        m.Items.Add(item("Подчеркнуть", "Ctrl+U", () => ToggleDecoration(rtb, TextDecorationLocation.Underline)));
+        m.Items.Add(item("Зачеркнуть", "Ctrl+Shift+X", () => ToggleDecoration(rtb, TextDecorationLocation.Strikethrough)));
+        m.Items.Add(item("Маркер", "Ctrl+Shift+H", () => ToggleMarker(rtb)));
+        m.Items.Add(item("Убрать оформление", "", () =>
+        {
+            var s = rtb.Selection;
+            s.ApplyPropertyValue(TextElement.FontWeightProperty, rtb.FontWeight);
+            s.ApplyPropertyValue(TextElement.FontStyleProperty, FontStyles.Normal);
+            s.ApplyPropertyValue(Inline.TextDecorationsProperty, new TextDecorationCollection());
+            s.ApplyPropertyValue(TextElement.BackgroundProperty, null);
+        }));
+        m.Items.Add(new Separator());
+        m.Items.Add(new MenuItem { Header = "Вырезать", Command = ApplicationCommands.Cut, CommandTarget = rtb });
+        m.Items.Add(new MenuItem { Header = "Копировать", Command = ApplicationCommands.Copy, CommandTarget = rtb });
+        m.Items.Add(new MenuItem { Header = "Вставить", Command = ApplicationCommands.Paste, CommandTarget = rtb });
+        var tp = rtb.CaretPosition;
+        if (tp != null && tp.Paragraph != null)
+        {
+            string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
+            string url = UrlAt(text, new TextRange(tp.Paragraph.ContentStart, tp).Text.Length);
+            if (url != null)
+            {
+                m.Items.Add(new Separator());
+                var open = new MenuItem { Header = "Открыть ссылку", InputGestureText = "Ctrl+клик" };
+                open.Click += delegate { OpenUrl(url); };
+                m.Items.Add(open);
+            }
+        }
+        return m;
+    }
+
+    Grid RichPlaceholder(RichTextBox r, string hint)
+    {
+        var g = new Grid();
+        var ph = new TextBlock { Text = hint, FontSize = r.FontSize, Opacity = .4, IsHitTestVisible = false, Margin = new Thickness(2, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis };
+        Func<bool> empty = () => new TextRange(r.Document.ContentStart, r.Document.ContentEnd).Text.Trim().Length == 0;
+        ph.Visibility = empty() ? Visibility.Visible : Visibility.Collapsed;
+        r.TextChanged += delegate { ph.Visibility = empty() ? Visibility.Visible : Visibility.Collapsed; };
+        g.Children.Add(ph);
+        g.Children.Add(r);
+        return g;
     }
 
     Grid Placeholder(TextBox t, string hint)
@@ -819,13 +1165,16 @@ class Sticky : Window
         return g;
     }
 
-    void FocusLater(TextBox t, bool toEnd = false)
+    void FocusLater(Control c, bool toEnd = false)
     {
-        if (t == null) return;
+        if (c == null) return;
         Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
         {
-            t.Focus(); Keyboard.Focus(t);
-            if (toEnd) t.CaretIndex = t.Text.Length; else t.SelectAll();
+            c.Focus(); Keyboard.Focus(c);
+            var t = c as TextBox;
+            if (t != null) { if (toEnd) t.CaretIndex = t.Text.Length; else t.SelectAll(); }
+            var r = c as RichTextBox;
+            if (r != null) { if (toEnd) r.CaretPosition = r.Document.ContentEnd; else r.SelectAll(); }
         }));
     }
 
