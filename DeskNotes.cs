@@ -769,10 +769,13 @@ class Sticky : Window
             cb.Margin = new Thickness(0, fs * .28, 7, 0); cb.VerticalAlignment = VerticalAlignment.Top;
             cb.MouseLeftButtonDown += (s, e) => { e.Handled = true; sb.Done = !sb.Done; MarkDirty(); RenderItems(); };
             g.Children.Add(cb);
-            var t = HandBox(sb.Text, fs * .82, false);
-            if (sb.Done) { t.Opacity = .5; t.TextDecorations = TextDecorations.Strikethrough; }
-            t.TextChanged += delegate { sb.Text = t.Text; MarkDirty(); };
-            t.LostKeyboardFocus += delegate { if (sb.Text.Trim().Length == 0 && it.Subs.Contains(sb)) { it.Subs.Remove(sb); MarkDirty(); Dispatcher.BeginInvoke(new Action(RenderItems)); } };
+            var t = RichBox(sb.Text, fs * .82, false, FontWeights.Normal, md => { sb.Text = md; MarkDirty(); });
+            if (sb.Done)
+            {
+                t.Opacity = .5;
+                foreach (var blk in t.Document.Blocks) blk.SetValue(Paragraph.TextDecorationsProperty, TextDecorations.Strikethrough);
+            }
+            t.LostKeyboardFocus += delegate { if (PlainOf(sb.Text).Trim().Length == 0 && it.Subs.Contains(sb)) { it.Subs.Remove(sb); MarkDirty(); Dispatcher.BeginInvoke(new Action(RenderItems)); } };
             Grid.SetColumn(t, 1);
             g.Children.Add(t);
             subs.Children.Add(g);
@@ -1022,15 +1025,24 @@ class Sticky : Window
             else if (ctrl && shift && e.Key == Key.H) { ToggleMarker(rtb); e.Handled = true; }
             else if (ctrl && (e.Key == Key.E || e.Key == Key.L || e.Key == Key.R || e.Key == Key.J || e.Key == Key.OemOpenBrackets || e.Key == Key.OemCloseBrackets)) e.Handled = true; // no alignment / font-size tricks
         };
+        Func<Point, string> urlUnder = pt =>
+        {
+            var tp = rtb.GetPositionFromPoint(pt, false);
+            if (tp == null || tp.Paragraph == null) return null;
+            string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
+            return UrlAt(text, new TextRange(tp.Paragraph.ContentStart, tp).Text.Length);
+        };
         rtb.PreviewMouseLeftButtonDown += (s, e) =>
         {
             if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
-            var tp = rtb.GetPositionFromPoint(e.GetPosition(rtb), true);
-            if (tp == null || tp.Paragraph == null) return;
-            string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
-            int idx = new TextRange(tp.Paragraph.ContentStart, tp).Text.Length;
-            string url = UrlAt(text, idx);
+            string url = urlUnder(e.GetPosition(rtb));
             if (url != null) { e.Handled = true; OpenUrl(url); }
+        };
+        // hand cursor over a link while Ctrl is held, so it's clear the link can be opened
+        rtb.PreviewMouseMove += (s, e) =>
+        {
+            bool hand = (Keyboard.Modifiers & ModifierKeys.Control) != 0 && urlUnder(e.GetPosition(rtb)) != null;
+            rtb.Cursor = hand ? Cursors.Hand : null;
         };
         rtb.ContextMenu = new ContextMenu();
         rtb.ContextMenuOpening += (s, e) => { rtb.ContextMenu = FormatMenu(rtb); };
