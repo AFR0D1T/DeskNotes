@@ -1,0 +1,22 @@
+# Builds DeskNotes on Windows and publishes DeskNotes-Setup.exe as a GitHub release.
+# Runs when a version tag (v2.2.0, ...) is pushed, or by hand from the Actions tab.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\build.ps1 -Release
