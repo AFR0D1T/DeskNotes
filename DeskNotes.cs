@@ -1125,7 +1125,14 @@ class Sticky : Window
                 string label = new TextRange(hl.ContentStart, hl.ContentEnd).Text.Replace("[", "(").Replace("]", ")");
                 var firstRun = hl.Inlines.OfType<Run>().FirstOrDefault();
                 if (label.Trim().Length == 0) continue; // the name was erased -> drop the link
-                if (hl.NavigateUri == null) { segs.Add(Tuple.Create(label, firstRun != null ? RunFlags(firstRun, baseWeight) : 0)); continue; }
+                if (hl.NavigateUri == null)
+                {
+                    // never save a link without its address: fall back to the address kept in the tooltip
+                    string tip = hl.ToolTip as string;
+                    string keep = tip != null ? tip.Split('\n')[0] : null;
+                    segs.Add(Tuple.Create(keep != null && ToUri(keep) != null ? "[" + label + "](" + keep + ")" : label, firstRun != null ? RunFlags(firstRun, baseWeight) : 0));
+                    continue;
+                }
                 segs.Add(Tuple.Create("[" + label + "](" + hl.NavigateUri.OriginalString + ")", firstRun != null ? RunFlags(firstRun, baseWeight) : 0));
                 continue;
             }
@@ -1205,13 +1212,18 @@ class Sticky : Window
         AskText(rtb, "Как подписать ссылку?", "", label =>
         {
             range.Text = "";
-            var h = new Hyperlink(new Run(label), range.Start) // inserted right where the address was
-            {
-                Foreground = LinkBrush, NavigateUri = ToUri(url),
-                ToolTip = url + "\nCtrl+клик — открыть, правый клик — показать или переименовать"
-            };
-            rtb.CaretPosition = h.ElementEnd;
+            InsertLink(range.Start, label, url);
         });
+    }
+
+    // The link is built completely (address included) BEFORE it goes into the document:
+    // the editor saves on every change, and a link inserted first and given its address
+    // afterwards was saved without the address.
+    void InsertLink(TextPointer at, string label, string url)
+    {
+        var h = EditorLink(label, url, 0);
+        if (h.NavigateUri == null) { new Run(label + " " + url, at); return; }
+        new Span(h, at);
     }
 
     void AskText(RichTextBox rtb, string prompt, string initial, Action<string> done)
@@ -1324,7 +1336,9 @@ class Sticky : Window
                 m.Items.Add(new Separator());
                 m.Items.Add(act("Сделать ссылкой (адрес из буфера)", () =>
                 {
-                    new Hyperlink(range.Start, range.End) { Foreground = LinkBrush, NavigateUri = ToUri(url), ToolTip = url + "\nCtrl+клик — открыть" };
+                    string label = range.Text.Trim();
+                    range.Text = "";
+                    InsertLink(range.Start, label, url);
                 }));
             }
         }
