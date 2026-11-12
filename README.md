@@ -13,7 +13,7 @@
 
 ## Установка
 
-Скачай [download/DeskNotes-Setup.exe](download/DeskNotes-Setup.exe) ([прямая ссылка](https://github.com/AFR0D1T/DeskNotes/raw/main/download/DeskNotes-Setup.exe)) и запусти.
+Скачай [DeskNotes-Setup.exe](https://github.com/AFR0D1T/DeskNotes/releases/latest/download/DeskNotes-Setup.exe) из [последнего релиза](https://github.com/AFR0D1T/DeskNotes/releases/latest) и запусти.
 
 - Права администратора не нужны, ставится в `%LOCALAPPDATA%\Programs\DeskNotes`.
 - Галочки: голосовой ввод (скачает ~60 МБ офлайн-распознавания), автозапуск, ярлык в «Пуске».
@@ -36,8 +36,9 @@ Windows SmartScreen может предупредить о неизвестно�
 Нужна только Windows 10/11 — компилятор C# уже есть в системе.
 
 ```powershell
-.\build.ps1            # собрать bin\DeskNotes.exe и download\DeskNotes-Setup.exe
+.\build.ps1            # собрать bin\DeskNotes.exe и bin\DeskNotes-Setup.exe
 .\build.ps1 -Install   # собрать и заменить установленную копию
+.\build.ps1 -Release   # собрать и выложить установщик в GitHub Releases (нужен gh)
 ```
 
 Данные лежат в `%APPDATA%\DeskNotes` (`data.json`, `settings.json`, папка `fonts` для своих шрифтов).

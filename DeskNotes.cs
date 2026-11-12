@@ -223,7 +223,10 @@ class Sticky : Window
             new Thread(MigrateAutostart) { IsBackground = true, Priority = ThreadPriority.Lowest }.Start();
         };
         Activated += delegate { BackgroundMode(false); };
-        Deactivated += delegate { SendToBottom(); Flush(); BackgroundMode(true); TrimMemory(); };
+        // No TrimMemory() here: trimming on every focus loss pushes the pages out, and the next Ctrl+Alt+N
+        // has to fault them back in (slow at idle priority). Trimming happens once after start and after dictation.
+        // While dictating, stay at normal priority so recognition keeps up even if you click elsewhere.
+        Deactivated += delegate { SendToBottom(); Flush(); if (!recording) BackgroundMode(true); };
         LocationChanged += delegate { cfg.X = Left; cfg.Y = Top; MarkDirty(); };
         SizeChanged += delegate { cfg.W = Width; cfg.H = Height; MarkDirty(); };
         PreviewKeyDown += OnKey;
@@ -1777,6 +1780,7 @@ class Sticky : Window
     void FinishDictation(string text, string error)
     {
         recording = false; dictating = false;
+        if (!IsActive) BackgroundMode(true); // dictation ended while another window had focus
         RenderAdd();
         if (error != null) MessageBox.Show("Голосовой ввод не сработал: " + error, "DeskNotes");
         else if (text.Trim().Length > 0) HandleDictation(text);
