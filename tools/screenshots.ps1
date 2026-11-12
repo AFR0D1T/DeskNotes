@@ -47,10 +47,21 @@ function Item($title, [bool]$done = $false, [int]$tag = -1, $details = "", $subs
 function Ink {
     $sc = New-Object System.Windows.Ink.StrokeCollection
     function Add($pts) {
+        # straight segments are cut into small steps with a slight hand tremor, like a real pen stroke
         $c = New-Object System.Windows.Input.StylusPointCollection
-        foreach ($p in $pts) { $c.Add([System.Windows.Input.StylusPoint]::new([double]$p[0], [double]$p[1])) }
+        $n = 0
+        for ($i = 0; $i -lt $pts.Count; $i++) {
+            $a = $pts[$i]; $b = if ($i + 1 -lt $pts.Count) { $pts[$i + 1] } else { $null }
+            if ($b -eq $null) { $c.Add([System.Windows.Input.StylusPoint]::new([double]$a[0], [double]$a[1])); break }
+            $len = [math]::Sqrt([math]::Pow($b[0] - $a[0], 2) + [math]::Pow($b[1] - $a[1], 2))
+            $steps = [math]::Max(1, [int]($len / 5))
+            for ($k = 0; $k -lt $steps; $k++) {
+                $t = $k / $steps; $n++
+                $c.Add([System.Windows.Input.StylusPoint]::new([double]($a[0] + ($b[0] - $a[0]) * $t + [math]::Sin($n * .9) * .6), [double]($a[1] + ($b[1] - $a[1]) * $t + [math]::Cos($n * 1.3) * .6)))
+            }
+        }
         $s = [System.Windows.Ink.Stroke]::new($c)
-        $s.DrawingAttributes.Width = 3; $s.DrawingAttributes.Height = 3; $s.DrawingAttributes.FitToCurve = $true
+        $s.DrawingAttributes.Width = 3; $s.DrawingAttributes.Height = 3; $s.DrawingAttributes.FitToCurve = $false
         $s.DrawingAttributes.Color = [System.Windows.Media.Color]::FromRgb(0xEC, 0xEA, 0xE4)
         $sc.Add($s)
     }
@@ -93,7 +104,7 @@ function Scene($name, [int]$active, $look) {
     $store = [ordered]@{ Tabs = $tabs; Active = $active; DrawTabAdded = $true }
     $json = ($store | ConvertTo-Json -Depth 8) -replace '"/Date\((\d+)\)/"', '"\/Date($1)\/"'
     [IO.File]::WriteAllText((Join-Path $data "data.json"), $json, (New-Object Text.UTF8Encoding $false))
-    $cfg = [ordered]@{ X = 70; Y = 60; W = 360; H = 500; Font = "Caveat"; HideFromCapture = $false }
+    $cfg = [ordered]@{ X = 520; Y = 60; W = 360; H = 500; Font = "Caveat"; HideFromCapture = $false }
     foreach ($k in $look.Keys) { $cfg[$k] = $look[$k] }
     [IO.File]::WriteAllText((Join-Path $data "settings.json"), ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
 
