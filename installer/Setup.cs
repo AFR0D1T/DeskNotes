@@ -160,8 +160,8 @@ class Setup : Form
         else if (File.Exists(StartMenuLink)) File.Delete(StartMenuLink);
         using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
         {
-            if (auto) k.SetValue("DeskNotes", "\"" + AppExe + "\"");
-            else k.DeleteValue("DeskNotes", false);
+            if (auto) k.SetValue("DeskNotes", "\"" + AppExe + "\""); // DeskNotes itself moves this to a faster logon task
+            else { k.DeleteValue("DeskNotes", false); DeleteLogonTask(); }
         }
         using (var k = Registry.CurrentUser.CreateSubKey(UninstallKey))
         {
@@ -257,6 +257,16 @@ class Setup : Form
         t.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
     }
 
+    static void DeleteLogonTask()
+    {
+        try
+        {
+            var p = Process.Start(new ProcessStartInfo("schtasks.exe", "/delete /tn DeskNotes /f") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true });
+            p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(10000);
+        }
+        catch { }
+    }
+
     static long DirSize(string dir)
     {
         try { return new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); } catch { return 0; }
@@ -272,6 +282,7 @@ class Setup : Form
         StopApp();
         try { if (File.Exists(StartMenuLink)) File.Delete(StartMenuLink); } catch { }
         try { using (var k = Registry.CurrentUser.OpenSubKey(RunKey, true)) if (k != null) k.DeleteValue("DeskNotes", false); } catch { }
+        DeleteLogonTask();
         try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }
         try { if (Directory.Exists(VoskDir)) Directory.Delete(VoskDir, true); } catch { }
         if (wipeData) { try { Directory.Delete(DataDir, true); } catch { } }
