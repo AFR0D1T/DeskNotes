@@ -43,8 +43,8 @@ function Ink {
     $sc = New-Object System.Windows.Ink.StrokeCollection
     function Add($pts) {
         $c = New-Object System.Windows.Input.StylusPointCollection
-        foreach ($p in $pts) { $c.Add((New-Object System.Windows.Input.StylusPoint $p[0], $p[1])) }
-        $s = New-Object System.Windows.Ink.Stroke $c
+        foreach ($p in $pts) { $c.Add([System.Windows.Input.StylusPoint]::new([double]$p[0], [double]$p[1])) }
+        $s = [System.Windows.Ink.Stroke]::new($c)
         $s.DrawingAttributes.Width = 3; $s.DrawingAttributes.Height = 3; $s.DrawingAttributes.FitToCurve = $true
         $s.DrawingAttributes.Color = [System.Windows.Media.Color]::FromRgb(0xEC, 0xEA, 0xE4)
         $sc.Add($s)
