@@ -1,19 +1,39 @@
-# Builds DeskNotes.exe with the C# compiler that ships with Windows (.NET Framework 4.x).
-# Usage:  .\build.ps1            -> builds .\bin\DeskNotes.exe
+# Builds DeskNotes with the C# compiler that ships with Windows (.NET Framework 4.x) — nothing to install.
+# Usage:  .\build.ps1            -> bin\DeskNotes.exe and download\DeskNotes-Setup.exe
 #         .\build.ps1 -Install   -> also replaces the running copy in %LOCALAPPDATA%\Programs\DeskNotes
 param([switch]$Install)
 
 $ErrorActionPreference = "Stop"
-$fw  = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
-$out = Join-Path $PSScriptRoot "bin\DeskNotes.exe"
-New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
+$fw   = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
+$root = $PSScriptRoot
+$bin  = Join-Path $root "bin"
+$app  = Join-Path $bin "DeskNotes.exe"
+$icon = Join-Path $root "assets\icon.ico"
+$setup = Join-Path $root "download\DeskNotes-Setup.exe"
+New-Item -ItemType Directory -Force $bin, (Split-Path $setup) | Out-Null
 
-& "$fw\csc.exe" /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /lib:"$fw\WPF" `
+$config = @'
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <startup><supportedRuntime version="v4.0"/></startup>
+  <runtime><gcConcurrent enabled="false"/></runtime>
+</configuration>
+'@
+
+# the app: optimized, no debug info, x64
+& "$fw\csc.exe" /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ /debug- /win32icon:$icon /lib:"$fw\WPF" `
     /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll `
     /r:System.Runtime.Serialization.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll `
-    /out:$out (Join-Path $PSScriptRoot "DeskNotes.cs")
-if ($LASTEXITCODE) { throw "Build failed" }
-Write-Host "Built $out"
+    /out:$app (Join-Path $root "DeskNotes.cs")
+if ($LASTEXITCODE) { throw "App build failed" }
+Set-Content "$app.config" $config -Encoding utf8
+
+# the installer, with the app embedded inside it
+& "$fw\csc.exe" /nologo /codepage:65001 /target:winexe /platform:anycpu /optimize+ /debug- /win32icon:$icon `
+    /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll `
+    /resource:"$app,DeskNotes.exe" /out:$setup (Join-Path $root "installer\Setup.cs")
+if ($LASTEXITCODE) { throw "Installer build failed" }
+Write-Host ("Built {0} and {1} ({2:N0} KB)" -f $app, $setup, ((Get-Item $setup).Length / 1KB))
 
 if ($Install) {
     $dst = "$env:LOCALAPPDATA\Programs\DeskNotes"
@@ -22,7 +42,7 @@ if ($Install) {
     if (Test-Path $data) { Copy-Item $data "$env:APPDATA\DeskNotes\data.backup.json" -Force }
     Get-Process DeskNotes -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep 1
-    Copy-Item $out "$dst\DeskNotes.exe" -Force
+    Copy-Item $app, "$app.config" $dst -Force
     Start-Process "$dst\DeskNotes.exe"
     Write-Host "Installed and started $dst\DeskNotes.exe"
 }
