@@ -539,7 +539,7 @@ class Sticky : Window
         var plus = new TextBlock { Text = "+", Opacity = .5, Margin = new Thickness(2, 0, 9, 0) };
         addHost.Children.Add(plus);
         addHost.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var host = Placeholder(HandBox("", fs * .95, false), dictating ? "говори… потом Enter" : Cur.Checklist ? "новое дело" : "новая заметка");
+        var host = Placeholder(HandBox("", fs * .95, false), dictating ? "слушаю… говори" : Cur.Checklist ? "новое дело" : "новая заметка");
         addBox = (TextBox)host.Tag;
         addBox.Opacity = .85;
 
@@ -548,7 +548,7 @@ class Sticky : Window
             Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = fs * .72,
             Foreground = dictating ? B(cfg.TagColors[0]) : ink, Opacity = dictating ? 1 : .55, Cursor = Cursors.Hand,
             VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0),
-            ToolTip = "Надиктовать (Ctrl+M). Несколько дел за раз — я разделю их сам"
+            ToolTip = dictating ? "Слушаю. Пауза 3 секунды, Enter или клик — готово" : "Надиктовать (Ctrl+M). Несколько дел за раз разделятся сами"
         };
         mic.MouseLeftButtonDown += (s, e) => { e.Handled = true; StartDictation(); };
         Grid.SetColumn(mic, 2);
@@ -560,7 +560,7 @@ class Sticky : Window
             e.Handled = true;
             string t = addBox.Text.Trim();
             if (t.Length == 0) return;
-            if (dictating) { addBox.Text = ""; dictating = false; HandleDictation(t); RenderAdd(); FocusLater(addBox); return; }
+            if (dictating) { recording = false; return; } // Enter while listening = done
             var it = new Item { Title = t };
             addBox.Text = "";
             if (Cur.Checklist)
@@ -829,22 +829,190 @@ class Sticky : Window
         }));
     }
 
-    // ---------------- dictation ----------------
-    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    // ---------------- dictation: offline speech recognition (Vosk) ----------------
+    // Engine + Russian model live in %APPDATA%\DeskNotes\vosk\{lib,model}. Nothing runs until the mic is pressed;
+    // the recording thread exists only while listening and the model is freed 3 minutes after the last use.
+    const string VOSK = "libvosk.dll";
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool SetDllDirectory(string p);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern void vosk_set_log_level(int level);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr vosk_model_new(byte[] path);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern void vosk_model_free(IntPtr m);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr vosk_recognizer_new(IntPtr m, float rate);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern int vosk_recognizer_accept_waveform(IntPtr r, byte[] data, int len);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr vosk_recognizer_result(IntPtr r);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr vosk_recognizer_partial_result(IntPtr r);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern IntPtr vosk_recognizer_final_result(IntPtr r);
+    [DllImport(VOSK, CallingConvention = CallingConvention.Cdecl)] static extern void vosk_recognizer_free(IntPtr r);
+
+    [StructLayout(LayoutKind.Sequential)] struct WaveFormat { public ushort tag, channels; public uint rate, bytesPerSec; public ushort blockAlign, bits, cb; }
+    [StructLayout(LayoutKind.Sequential)] struct WaveHdr { public IntPtr data; public uint len, recorded; public IntPtr user; public uint flags, loops; public IntPtr next, reserved; }
+    [DllImport("winmm.dll")] static extern int waveInOpen(out IntPtr h, uint dev, ref WaveFormat fmt, IntPtr cb, IntPtr inst, uint flags);
+    [DllImport("winmm.dll")] static extern int waveInPrepareHeader(IntPtr h, IntPtr hdr, int size);
+    [DllImport("winmm.dll")] static extern int waveInUnprepareHeader(IntPtr h, IntPtr hdr, int size);
+    [DllImport("winmm.dll")] static extern int waveInAddBuffer(IntPtr h, IntPtr hdr, int size);
+    [DllImport("winmm.dll")] static extern int waveInStart(IntPtr h);
+    [DllImport("winmm.dll")] static extern int waveInReset(IntPtr h);
+    [DllImport("winmm.dll")] static extern int waveInClose(IntPtr h);
+
     bool dictating;
+    volatile bool recording;
+    IntPtr voskModel;
+    readonly object voskLock = new object();
+    DispatcherTimer modelIdle;
+    static string VoskDir { get { return F("vosk"); } }
 
     void StartDictation()
     {
-        if (Cur.Drawing) SwitchTab(store.Tabs.FindIndex(t => !t.Drawing));
-        dictating = true;
-        RenderAdd();
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        if (recording) { recording = false; return; } // second press = done; the thread posts the result
+        if (dictating) return;                         // still finishing the previous phrase
+        if (!IOFile.Exists(IOPath.Combine(VoskDir, "lib", VOSK)) || !IODir.Exists(IOPath.Combine(VoskDir, "model")))
         {
-            addBox.Focus(); Keyboard.Focus(addBox);
-            // Win+H = built-in Windows voice typing; it types straight into the focused box
-            keybd_event(0x5B, 0, 0, UIntPtr.Zero); keybd_event(0x48, 0, 0, UIntPtr.Zero);
-            keybd_event(0x48, 0, 2, UIntPtr.Zero); keybd_event(0x5B, 0, 2, UIntPtr.Zero);
-        }));
+            MessageBox.Show("Распознавание речи не установлено: нет папки " + VoskDir, "DeskNotes");
+            return;
+        }
+        if (Cur.Drawing) SwitchTab(store.Tabs.FindIndex(t => !t.Drawing));
+        dictating = true; recording = true;
+        if (modelIdle != null) modelIdle.Stop();
+        RenderAdd();
+        FocusLater(addBox, true);
+        new Thread(RecordLoop) { IsBackground = true, Name = "dictation" }.Start();
+    }
+
+    void UI(Action a) { Dispatcher.BeginInvoke(a); }
+
+    static string Utf8(IntPtr p)
+    {
+        if (p == IntPtr.Zero) return "";
+        int n = 0;
+        while (Marshal.ReadByte(p, n) != 0) n++;
+        var b = new byte[n];
+        Marshal.Copy(p, b, 0, n);
+        return Encoding.UTF8.GetString(b);
+    }
+
+    static string JsonField(string json, string key)
+    {
+        var m = Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+        return m.Success ? Regex.Unescape(m.Groups[1].Value).Trim() : "";
+    }
+
+    void RecordLoop()
+    {
+        string error = null;
+        var done = new StringBuilder();
+        IntPtr rec = IntPtr.Zero, h = IntPtr.Zero;
+        var hdrs = new List<IntPtr>();
+        int hsz = Marshal.SizeOf(typeof(WaveHdr));
+        int flagsOff = (int)Marshal.OffsetOf(typeof(WaveHdr), "flags");
+        int recOff = (int)Marshal.OffsetOf(typeof(WaveHdr), "recorded");
+        try
+        {
+            lock (voskLock)
+            {
+                if (voskModel == IntPtr.Zero)
+                {
+                    SetDllDirectory(IOPath.Combine(VoskDir, "lib"));
+                    vosk_set_log_level(-1);
+                    voskModel = vosk_model_new(Encoding.UTF8.GetBytes(IOPath.Combine(VoskDir, "model") + "\0"));
+                }
+                if (voskModel == IntPtr.Zero) throw new Exception("не загрузилась модель распознавания");
+                rec = vosk_recognizer_new(voskModel, 16000f);
+            }
+            var fmt = new WaveFormat { tag = 1, channels = 1, rate = 16000, bytesPerSec = 32000, blockAlign = 2, bits = 16 };
+            int mr = waveInOpen(out h, 0xFFFFFFFF, ref fmt, IntPtr.Zero, IntPtr.Zero, 0);
+            if (mr != 0) { h = IntPtr.Zero; throw new Exception("не открылся микрофон (код " + mr + "). Проверь, что он подключён и разрешён в Параметры → Конфиденциальность → Микрофон"); }
+            for (int i = 0; i < 4; i++)
+            {
+                var hp = Marshal.AllocHGlobal(hsz);
+                Marshal.StructureToPtr(new WaveHdr { data = Marshal.AllocHGlobal(3200), len = 3200 }, hp, false);
+                hdrs.Add(hp);
+                waveInPrepareHeader(h, hp, hsz);
+                waveInAddBuffer(h, hp, hsz);
+            }
+            UI(() => ShowHeard("", true));
+            waveInStart(h);
+
+            var chunk = new byte[3200];
+            DateTime started = DateTime.Now, lastChange = DateTime.Now;
+            string partial = "";
+            while (recording)
+            {
+                bool any = false;
+                foreach (var hp in hdrs)
+                {
+                    if ((Marshal.ReadInt32(hp, flagsOff) & 1) == 0) continue; // WHDR_DONE
+                    any = true;
+                    int n = Marshal.ReadInt32(hp, recOff);
+                    Marshal.Copy(Marshal.ReadIntPtr(hp), chunk, 0, n);
+                    if (vosk_recognizer_accept_waveform(rec, chunk, n) != 0)
+                    {
+                        string t = JsonField(Utf8(vosk_recognizer_result(rec)), "text");
+                        if (t.Length > 0) { if (done.Length > 0) done.Append(". "); done.Append(t); lastChange = DateTime.Now; }
+                        partial = "";
+                    }
+                    else
+                    {
+                        string p = JsonField(Utf8(vosk_recognizer_partial_result(rec)), "partial");
+                        if (p != partial) { partial = p; lastChange = DateTime.Now; }
+                    }
+                    string show = done.ToString() + (partial.Length > 0 ? (done.Length > 0 ? ". " : "") + partial : "");
+                    UI(() => ShowHeard(show, false));
+                    Marshal.WriteInt32(hp, flagsOff, 2); // keep WHDR_PREPARED, clear DONE
+                    Marshal.WriteInt32(hp, recOff, 0);
+                    waveInAddBuffer(h, hp, hsz);
+                }
+                bool spoke = done.Length > 0 || partial.Length > 0;
+                double since = (DateTime.Now - lastChange).TotalSeconds, total = (DateTime.Now - started).TotalSeconds;
+                if (spoke && since > 3) break;      // 3 s pause after speaking = finished
+                if (!spoke && total > 15) break;    // nothing said
+                if (total > 180) break;
+                if (!any) Thread.Sleep(30);
+            }
+            string fin = JsonField(Utf8(vosk_recognizer_final_result(rec)), "text");
+            if (fin.Length > 0) { if (done.Length > 0) done.Append(". "); done.Append(fin); }
+        }
+        catch (DllNotFoundException) { error = "не найден движок распознавания в " + VoskDir; }
+        catch (Exception ex) { error = ex.Message; }
+        finally
+        {
+            if (h != IntPtr.Zero)
+            {
+                waveInReset(h);
+                foreach (var hp in hdrs) waveInUnprepareHeader(h, hp, hsz);
+                waveInClose(h);
+            }
+            foreach (var hp in hdrs) { Marshal.FreeHGlobal(Marshal.ReadIntPtr(hp)); Marshal.FreeHGlobal(hp); }
+            if (rec != IntPtr.Zero) vosk_recognizer_free(rec);
+        }
+        string text = done.ToString();
+        UI(() => FinishDictation(text, error));
+    }
+
+    void ShowHeard(string text, bool ready)
+    {
+        if (!dictating || addBox == null) return;
+        addBox.Text = text;
+        addBox.CaretIndex = text.Length;
+    }
+
+    void FinishDictation(string text, string error)
+    {
+        recording = false; dictating = false;
+        RenderAdd();
+        if (error != null) MessageBox.Show("Голосовой ввод не сработал: " + error, "DeskNotes");
+        else if (text.Trim().Length > 0) HandleDictation(text);
+        FocusLater(addBox);
+        if (modelIdle == null)
+        {
+            modelIdle = new DispatcherTimer { Interval = TimeSpan.FromMinutes(3) };
+            modelIdle.Tick += delegate
+            {
+                modelIdle.Stop();
+                lock (voskLock) { if (!recording && voskModel != IntPtr.Zero) { vosk_model_free(voskModel); voskModel = IntPtr.Zero; } }
+                TrimMemory();
+            };
+        }
+        modelIdle.Stop(); modelIdle.Start();
     }
 
     static readonly string[] NotePrefixes = { "запиши в заметки", "запиши заметку", "добавь заметку", "запомни", "заметка", "заметку" };
