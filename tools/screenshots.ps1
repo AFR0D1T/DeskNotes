@@ -13,6 +13,9 @@ Add-Type -Name W -Namespace DN -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 public delegate bool EnumProc(IntPtr h, IntPtr l);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr l);
+[DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
+[DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
+[DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr d, int x, int y, int w, int h, IntPtr s, int sx, int sy, int rop);
 public struct RECT { public int Left, Top, Right, Bottom; }
 public static IntPtr Find(uint pid) {
     IntPtr found = IntPtr.Zero;
@@ -105,7 +108,10 @@ function Scene($name, [int]$active, $look) {
     $w = $r.Right - $r.Left + 2 * $m; $hh = $r.Bottom - $r.Top + 2 * $m
     $bmp = New-Object Drawing.Bitmap $w, $hh
     $g = [Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen($x, $y, 0, 0, $bmp.Size, [Drawing.CopyPixelOperation]'SourceCopy, CaptureBlt') # CaptureBlt: include the layered (transparent) window
+    # SRCCOPY | CAPTUREBLT, so the layered (transparent) sticker window is included
+    $dst = $g.GetHdc(); $src = [DN.W]::GetDC([IntPtr]::Zero)
+    [DN.W]::BitBlt($dst, 0, 0, $w, $hh, $src, $x, $y, 0x40CC0020) | Out-Null
+    [DN.W]::ReleaseDC([IntPtr]::Zero, $src) | Out-Null; $g.ReleaseHdc($dst)
     $bmp.Save((Join-Path $Out "$name.png"), [Drawing.Imaging.ImageFormat]::Png)
     $g.Dispose(); $bmp.Dispose()
     return @{ Process = $p; Startup = $startup }
