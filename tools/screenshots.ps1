@@ -36,6 +36,8 @@ if (-not (Test-Path $font)) { Invoke-WebRequest "https://raw.githubusercontent.c
 [DN.W]::SystemParametersInfo(0x14, 0, "", 3) | Out-Null
 [DN.W]::SetSysColors(1, @(1), @(0x00B8B2AA)) | Out-Null   # 0x00BBGGRR
 
+$shell = New-Object -ComObject Shell.Application
+
 function Date([int]$daysAgo) { "/Date(" + [DateTimeOffset]::UtcNow.AddDays(-$daysAgo).ToUnixTimeMilliseconds() + ")/" }
 function Item($title, [bool]$done = $false, [int]$tag = -1, $details = "", $subs = @(), [int]$age = 0) {
     [ordered]@{ Title = $title; Done = $done; Tag = $tag; Details = $details; Subs = @($subs | ForEach-Object { [ordered]@{ Text = $_[0]; Done = [bool]$_[1] } }); Created = (Date $age) }
@@ -95,12 +97,15 @@ function Scene($name, [int]$active, $look) {
     foreach ($k in $look.Keys) { $cfg[$k] = $look[$k] }
     [IO.File]::WriteAllText((Join-Path $data "settings.json"), ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
 
+    # the sticker lives under all other windows, so clear the desktop first
+    $shell.MinimizeAll(); Start-Sleep 2
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $p = Start-Process $Exe -PassThru
     $h = [IntPtr]::Zero
     while ($h -eq [IntPtr]::Zero -and $sw.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 20; $h = [DN.W]::Find([uint32]$p.Id) }
     $startup = $sw.Elapsed.TotalSeconds
-    Start-Sleep 3
+    Start-Sleep 2
+    $shell.MinimizeAll(); Start-Sleep 2   # anything that popped up meanwhile
     $r = New-Object DN.W+RECT
     [DN.W]::GetWindowRect($h, [ref]$r) | Out-Null
     $m = 28
