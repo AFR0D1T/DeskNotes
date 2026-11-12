@@ -1,7 +1,8 @@
 # Builds DeskNotes with the C# compiler that ships with Windows (.NET Framework 4.x) — nothing to install.
-# Usage:  .\build.ps1            -> bin\DeskNotes.exe and download\DeskNotes-Setup.exe
+# Usage:  .\build.ps1            -> bin\DeskNotes.exe and bin\DeskNotes-Setup.exe
 #         .\build.ps1 -Install   -> also replaces the running copy in %LOCALAPPDATA%\Programs\DeskNotes
-param([switch]$Install)
+#         .\build.ps1 -Release   -> also publishes bin\DeskNotes-Setup.exe as a GitHub release (needs the gh CLI)
+param([switch]$Install, [switch]$Release)
 
 $ErrorActionPreference = "Stop"
 $fw   = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
@@ -9,8 +10,8 @@ $root = $PSScriptRoot
 $bin  = Join-Path $root "bin"
 $app  = Join-Path $bin "DeskNotes.exe"
 $icon = Join-Path $root "assets\icon.ico"
-$setup = Join-Path $root "download\DeskNotes-Setup.exe"
-New-Item -ItemType Directory -Force $bin, (Split-Path $setup) | Out-Null
+$setup = Join-Path $bin "DeskNotes-Setup.exe"
+New-Item -ItemType Directory -Force $bin | Out-Null
 
 $config = @'
 <?xml version="1.0" encoding="utf-8"?>
@@ -45,4 +46,15 @@ if ($Install) {
     Copy-Item $app, "$app.config" $dst -Force
     Start-Process "$dst\DeskNotes.exe"
     Write-Host "Installed and started $dst\DeskNotes.exe"
+}
+
+if ($Release) {
+    # version comes from the installer: const string Version = "x.y.z";
+    $ver = [regex]::Match((Get-Content (Join-Path $root "installer\Setup.cs") -Raw), 'const string Version = "([^"]+)"').Groups[1].Value
+    if (-not $ver) { throw "Version not found in installer\Setup.cs" }
+    & gh release view "v$ver" *> $null
+    if ($LASTEXITCODE -eq 0) { & gh release upload "v$ver" $setup --clobber }
+    else { & gh release create "v$ver" $setup --title "DeskNotes $ver" --notes "Скачай DeskNotes-Setup.exe и запусти." }
+    if ($LASTEXITCODE) { throw "Release failed" }
+    Write-Host "Published v$ver"
 }

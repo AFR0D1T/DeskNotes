@@ -25,6 +25,10 @@ class Setup : Form
     const string Version = "2.1.0";
     const string VoskLibUrl = "https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip";
     const string VoskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip";
+    // SHA-256 of the downloads: a swapped or truncated file is rejected before anything is unpacked.
+    // An empty value skips the check for that file (fill it in: Get-FileHash .\file.zip -Algorithm SHA256).
+    const string VoskLibSha256 = "f1dcc9cca460630f81ea8f71794f69c80bed6556d2a4e6237b5785e1d2dff34b";
+    const string VoskModelSha256 = "";
     const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\DeskNotes";
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
@@ -191,8 +195,13 @@ class Setup : Form
             Download(VoskLibUrl, libZip, "Скачиваю движок распознавания", 0, 25);
             Download(VoskModelUrl, modelZip, "Скачиваю русскую модель речи", 25, 90);
 
+            Status("Проверяю скачанное…", 91);
+            CheckSha256(libZip, VoskLibSha256);
+            CheckSha256(modelZip, VoskModelSha256);
+
             Status("Распаковываю голосовой ввод…", 92);
             string lib = Path.Combine(VoskDir, "lib"), model = Path.Combine(VoskDir, "model");
+            string modelRoot = model + Path.DirectorySeparatorChar; // so "...\model2\..." doesn't pass the check below
             if (Directory.Exists(lib)) Directory.Delete(lib, true);
             if (Directory.Exists(model)) Directory.Delete(model, true);
             Directory.CreateDirectory(lib);
@@ -206,7 +215,7 @@ class Setup : Form
                     int slash = e.FullName.IndexOf('/');
                     string rel = slash >= 0 ? e.FullName.Substring(slash + 1) : e.FullName; // drop the top "vosk-model-small-ru-0.22/" folder
                     string dest = Path.GetFullPath(Path.Combine(model, rel.Replace('/', '\\')));
-                    if (!dest.StartsWith(model, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!dest.StartsWith(modelRoot, StringComparison.OrdinalIgnoreCase)) continue;
                     Directory.CreateDirectory(Path.GetDirectoryName(dest));
                     e.ExtractToFile(dest, true);
                 }
@@ -233,6 +242,17 @@ class Setup : Form
             done.WaitOne();
         }
         if (err != null) throw new Exception("не удалось скачать голосовой модуль (" + err.Message + "). Проверь интернет или сними галочку «Голосовой ввод»");
+    }
+
+    static void CheckSha256(string file, string expected)
+    {
+        if (string.IsNullOrEmpty(expected)) return;
+        string actual;
+        using (var sha = System.Security.Cryptography.SHA256.Create())
+        using (var f = File.OpenRead(file))
+            actual = BitConverter.ToString(sha.ComputeHash(f)).Replace("-", "");
+        if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            throw new Exception("скачанный голосовой модуль повреждён или подменён (не совпала контрольная сумма). Попробуй ещё раз позже или сними галочку «Голосовой ввод»");
     }
 
     static void StopApp()
