@@ -17,12 +17,12 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Установка DeskNotes")]
 [assembly: AssemblyProduct("DeskNotes")]
-[assembly: AssemblyVersion("2.1.0.0")]
-[assembly: AssemblyFileVersion("2.1.0.0")]
+[assembly: AssemblyVersion("2.2.0.0")]
+[assembly: AssemblyFileVersion("2.2.0.0")]
 
 class Setup : Form
 {
-    const string Version = "2.1.0";
+    const string Version = "2.2.0";
     const string VoskLibUrl = "https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip";
     const string VoskModelUrl = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip";
     // SHA-256 of the downloads: a swapped or truncated file is rejected before anything is unpacked.
