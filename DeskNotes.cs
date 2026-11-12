@@ -118,6 +118,7 @@ class Sticky : Window
     [DllImport("kernel32.dll")] static extern bool SetProcessInformation(IntPtr p, int infoClass, ref PowerThrottling info, int size);
     [StructLayout(LayoutKind.Sequential)] struct PowerThrottling { public uint Version, ControlMask, StateMask; }
 
+    static readonly FontFamily SegoeUI = new FontFamily("Segoe UI"); // one shared instance instead of one per row
     static Geometry Frozen(string data) { var g = Geometry.Parse(data); g.Freeze(); return g; }
     static readonly Geometry BoxGeo = Frozen(BOX), CheckGeo = Frozen(CHECK), ScribbleGeo = Frozen(SCRIBBLE);
 
@@ -385,7 +386,7 @@ class Sticky : Window
         paperGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var tabsRow = new DockPanel { Margin = new Thickness(0, 0, 0, 8), Background = Brushes.Transparent, LastChildFill = true };
-        menuBtn = new TextBlock { Text = "⋯", Cursor = Cursors.Hand, Opacity = .55, Padding = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Top, FontFamily = new FontFamily("Segoe UI") };
+        menuBtn = new TextBlock { Text = "⋯", Cursor = Cursors.Hand, Opacity = .55, Padding = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Top, FontFamily = SegoeUI };
         menuBtn.MouseLeftButtonDown += (s, e) => { e.Handled = true; var m = MainMenu(); m.PlacementTarget = menuBtn; m.IsOpen = true; };
         DockPanel.SetDock(menuBtn, Dock.Right);
         // all tabs stay on one line; if they don't fit, the row shrinks a little instead of wrapping
@@ -774,7 +775,7 @@ class Sticky : Window
         var dot = new Ellipse { Width = fs * .48, Height = fs * .48, Margin = new Thickness(0, 0, 6, 0), Cursor = Cursors.Hand, ToolTip = "Цветная метка (правый клик — выбор)", VerticalAlignment = VerticalAlignment.Center };
         if (tag != null) dot.Fill = tag; else { dot.Stroke = ink; dot.StrokeThickness = 1.3; dot.StrokeDashArray = new DoubleCollection { 2, 2 }; dot.Fill = Brushes.Transparent; }
         dot.MouseLeftButtonDown += (s, e) => { e.Handled = true; it.Tag = it.Tag + 1 >= cfg.TagColors.Count ? -1 : it.Tag + 1; MarkDirty(); RenderItems(); };
-        var x = new TextBlock { Text = "×", FontFamily = new FontFamily("Segoe UI"), FontSize = fs * .8, Opacity = .6, Cursor = Cursors.Hand, ToolTip = "Удалить (Ctrl+Z — вернуть)", Margin = new Thickness(0, -fs * .3, 0, 0) };
+        var x = new TextBlock { Text = "×", FontFamily = SegoeUI, FontSize = fs * .8, Opacity = .6, Cursor = Cursors.Hand, ToolTip = "Удалить (Ctrl+Z — вернуть)", Margin = new Thickness(0, -fs * .3, 0, 0) };
         x.MouseLeftButtonDown += (s, e) => { e.Handled = true; DeleteItem(tab, it); };
         hover.Children.Add(dot); hover.Children.Add(x);
         if (!tab.Checklist)
@@ -1139,10 +1140,25 @@ class Sticky : Window
     {
         bool e;
         if (existsCache.TryGetValue(p, out e)) return e;
-        e = PathExists(p);
+        // This runs on the UI thread while you type and while the list is drawn. A network path (\\server\...
+        // or a mapped network drive) can take seconds to answer if the server is slow or offline, freezing the
+        // sticker, so it is never touched here; such links are still found, just not grown across spaces.
+        e = !IsNetworkPath(p) && PathExists(p);
         if (existsCache.Count > 500) existsCache.Clear();
         existsCache[p] = e;
         return e;
+    }
+
+    static bool IsNetworkPath(string t)
+    {
+        try
+        {
+            string p = ExpandPath(t);
+            if (p.StartsWith(@"\\")) return true;
+            if (p.Length >= 2 && p[1] == ':') return new System.IO.DriveInfo(p.Substring(0, 1)).DriveType == System.IO.DriveType.Network;
+        }
+        catch { }
+        return false;
     }
 
     static Uri ToUri(string target)
@@ -1912,6 +1928,7 @@ class Sticky : Window
 
     UIElement DrawCanvas(Tab tab)
     {
+        EncodeInk(); // a drawing changed a moment ago must be stored before it is loaded again
         canvas = new InkCanvas { Background = Brushes.Transparent, ClipToBounds = true };
         if (!string.IsNullOrEmpty(tab.InkData))
         {
@@ -1954,13 +1971,25 @@ class Sticky : Window
         s.StylusPoints = np;
     }
 
+    // Every stroke fires two or three events; encoding the whole drawing each time grew with the picture.
+    // Now a stroke only remembers which drawing changed, and it is encoded once, right before the file is written.
+    Tab inkTab; InkCanvas inkCanvas;
     void SaveInk(Tab tab, InkCanvas ic)
     {
+        if (inkCanvas != null && inkCanvas != ic) EncodeInk(); // another drawing still waiting: keep it
+        inkTab = tab; inkCanvas = ic;
+        MarkDirty();
+    }
+
+    void EncodeInk()
+    {
+        var tab = inkTab; var ic = inkCanvas;
+        inkTab = null; inkCanvas = null;
+        if (tab == null || ic == null) return;
         try
         {
             if (ic.Strokes.Count == 0) tab.InkData = null;
             else using (var ms = new System.IO.MemoryStream()) { ic.Strokes.Save(ms, true); tab.InkData = Convert.ToBase64String(ms.ToArray()); }
-            MarkDirty();
         }
         catch { }
     }
@@ -2099,6 +2128,7 @@ class Sticky : Window
     void Flush()
     {
         saveTimer.Stop();
+        EncodeInk();
         if (!dirty) return; // nothing changed: no disk write every time the sticker loses focus
         dirty = false;
         WriteJson(F("data.json"), store);
@@ -2224,7 +2254,14 @@ class Sticky : Window
         using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue("DeskNotes") != null;
     }
 
-    static bool IsAutostart() { return RunKeySet() || Schtasks("/query /tn " + TaskName) == 0; }
+    // Asking Task Scheduler means starting schtasks.exe and waiting for it, which used to happen every time
+    // the ⋯ menu opened. The answer is remembered; only this app turns autostart on or off.
+    static bool? autostartKnown;
+    static bool IsAutostart()
+    {
+        if (autostartKnown == null) autostartKnown = RunKeySet() || Schtasks("/query /tn " + TaskName) == 0;
+        return autostartKnown.Value;
+    }
 
     static bool CreateLogonTask()
     {
@@ -2255,6 +2292,7 @@ class Sticky : Window
 
     static void SetAutostart(bool on)
     {
+        autostartKnown = on;
         using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
         {
             if (on && CreateLogonTask()) { k.DeleteValue("DeskNotes", false); return; }
