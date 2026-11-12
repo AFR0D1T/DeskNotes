@@ -173,6 +173,16 @@ class Sticky : Window
         using (var m = new Mutex(true, "DeskNotes_SingleInstance_7f3a", out created))
         {
             if (!created) return;
+            // Multi-core JIT: the first run records which code starts the app, every later start compiles it
+            // in parallel in the background — the sticker shows up noticeably faster.
+            try
+            {
+                string cache = IOPath.Combine(Dir, "cache");
+                IODir.CreateDirectory(cache);
+                System.Runtime.ProfileOptimization.SetProfileRoot(cache);
+                System.Runtime.ProfileOptimization.StartProfile("startup.jit");
+            }
+            catch { }
             RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly; // never touches the GPU
             var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
             app.Run(new Sticky());
@@ -206,7 +216,12 @@ class Sticky : Window
         ApplyLook();
 
         SourceInitialized += OnSrcInit;
-        Loaded += delegate { SendToBottom(); BackgroundMode(true); TrimMemory(); };
+        Loaded += delegate
+        {
+            SendToBottom(); BackgroundMode(true); TrimMemory();
+            // after the sticker is already on screen, off the UI thread
+            new Thread(MigrateAutostart) { IsBackground = true, Priority = ThreadPriority.Lowest }.Start();
+        };
         Activated += delegate { BackgroundMode(false); };
         Deactivated += delegate { SendToBottom(); Flush(); BackgroundMode(true); TrimMemory(); };
         LocationChanged += delegate { cfg.X = Left; cfg.Y = Top; MarkDirty(); };
@@ -378,7 +393,26 @@ class Sticky : Window
         scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Hidden, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false };
         list = new StackPanel();
         scroll.Content = list;
-        contentHost = new Border { Child = scroll };
+        contentHost = new Border { Child = scroll, AllowDrop = true, Background = Brushes.Transparent };
+        // files dropped on the list itself (not into an open editor) become new entries, one per file
+        contentHost.DragOver += (s, e) =>
+        {
+            if (Cur.Drawing || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            e.Effects = DragDropEffects.Link; e.Handled = true;
+        };
+        contentHost.Drop += (s, e) =>
+        {
+            var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (Cur.Drawing || files == null || files.Length == 0) return;
+            e.Handled = true;
+            foreach (var f in files)
+            {
+                var it = new Item { Title = LinkMd(LabelFor(f), f) };
+                if (Cur.Checklist) Cur.Items.Add(it); else Cur.Items.Insert(0, it);
+            }
+            MarkDirty(); RenderItems();
+            if (Cur.Checklist) scroll.ScrollToEnd(); else scroll.ScrollToTop();
+        };
         Grid.SetRow(contentHost, 1);
 
         addHost = new Grid { Margin = new Thickness(0, 6, 0, 0) };
@@ -896,22 +930,63 @@ class Sticky : Window
 
     static string CleanUrl(string u) { return u.TrimEnd('.', ',', ';', ':', '!', '?', ')', ']', '»', '"', '\''); }
 
+    // web address or file/folder path under the given character, or null
     static string UrlAt(string text, int idx)
     {
         if (text == null || idx < 0) return null;
-        foreach (Match m in UrlRe.Matches(text))
-        {
-            string u = CleanUrl(m.Value);
-            if (idx >= m.Index && idx <= m.Index + u.Length) return u;
-        }
+        foreach (var l in FindLinks(text))
+            if (idx >= l.Item1 && idx <= l.Item1 + l.Item2) return l.Item4;
         return null;
     }
 
-    static void OpenUrl(string url)
+    static bool IsPath(string t)
     {
+        return t != null && (Regex.IsMatch(t, @"^[A-Za-z]:\\") || t.StartsWith(@"\\") || t.StartsWith("%"));
+    }
+
+    static string ExpandPath(string t) { return Environment.ExpandEnvironmentVariables(t.Trim().Trim('"')); }
+
+    static bool PathExists(string t)
+    {
+        try { string p = ExpandPath(t); return IOFile.Exists(p) || IODir.Exists(p); } catch { return false; }
+    }
+
+    // opens a web page in the browser, a folder in Explorer, a file in its usual program
+    static void OpenUrl(string target)
+    {
+        if (IsPath(target))
+        {
+            string p = ExpandPath(target);
+            if (!PathExists(p)) { MessageBox.Show("Не нашёл:\n" + p + "\n\nВозможно, файл или папку переместили или удалили.", "DeskNotes"); return; }
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(p) { UseShellExecute = true }); }
+            catch (Exception ex) { MessageBox.Show("Не получилось открыть:\n" + p + "\n\n" + ex.Message, "DeskNotes"); }
+            return;
+        }
+        string url = target;
         if (url.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) url = "https://" + url;
         if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return;
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    }
+
+    static void ShowInFolder(string target)
+    {
+        string p = ExpandPath(target);
+        if (!PathExists(p)) { OpenUrl(p); return; }
+        try { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + p + "\""); } catch { }
+    }
+
+    // how a named link is written into data.json; paths go in <> because they may contain spaces and brackets
+    static string LinkMd(string label, string target)
+    {
+        return "[" + label + "](" + (IsPath(target) ? "<" + target + ">" : target) + ")";
+    }
+
+    static string LabelFor(string target)
+    {
+        if (!IsPath(target)) return "";
+        string p = ExpandPath(target).TrimEnd('\\');
+        string name = IOPath.GetFileName(p);
+        return string.IsNullOrEmpty(name) ? p : name;
     }
 
     Brush LinkBrush { get { return B(cfg.TagColors.Count > 3 ? cfg.TagColors[3] : "#4A90FF"); } }
@@ -1004,10 +1079,13 @@ class Sticky : Window
         if ((f & FH) != 0) el.Background = B(cfg.TagColors.Count > 1 ? cfg.TagColors[1] : "#FFB020", 105);
     }
 
-    // named links are stored as [название](https://...), bare addresses stay as they are
-    static readonly Regex NamedLinkRe = new Regex(@"\[([^\]\n]+)\]\(((?:https?://|www\.)[^)\s]+)\)", RegexOptions.IgnoreCase);
+    // named links: [название](https://...) or [название](<C:\папка\файл.txt>); bare addresses and paths stay as typed
+    static readonly Regex NamedLinkRe = new Regex(@"\[([^\]\n]+)\]\((?:<([^>\n]+)>|((?:https?://|www\.)[^)\s]+))\)", RegexOptions.IgnoreCase);
 
-    // (index, length, label or null for a bare address, url) — in order, never overlapping
+    // "C:\Program Files\x" in quotes (Explorer's "Copy as path"), or C:\..., \\server\share, %USERPROFILE%\...
+    static readonly Regex PathRe = new Regex(@"""((?:[A-Za-z]:\\|\\\\)[^""\n]+)""|(?:[A-Za-z]:\\|\\\\|%[A-Za-z_]+%\\)[^\s""<>|*?\n]*");
+
+    // (index, length, label or null for a bare address, target) — in order, never overlapping
     static List<Tuple<int, int, string, string>> FindLinks(string text)
     {
         var res = new List<Tuple<int, int, string, string>>();
@@ -1015,7 +1093,8 @@ class Sticky : Window
         foreach (Match nm in NamedLinkRe.Matches(text))
         {
             AddBare(text, pos, nm.Index, res);
-            res.Add(Tuple.Create(nm.Index, nm.Length, nm.Groups[1].Value, nm.Groups[2].Value));
+            string target = nm.Groups[2].Success ? nm.Groups[2].Value : nm.Groups[3].Value;
+            res.Add(Tuple.Create(nm.Index, nm.Length, nm.Groups[1].Value, target));
             pos = nm.Index + nm.Length;
         }
         AddBare(text, pos, text.Length, res);
@@ -1025,18 +1104,58 @@ class Sticky : Window
     static void AddBare(string text, int from, int to, List<Tuple<int, int, string, string>> res)
     {
         if (to <= from) return;
-        foreach (Match m in UrlRe.Matches(text.Substring(from, to - from)))
+        string part = text.Substring(from, to - from);
+        var found = new List<Tuple<int, int, string, string>>();
+        foreach (Match m in UrlRe.Matches(part))
         {
             string u = CleanUrl(m.Value);
-            res.Add(Tuple.Create(from + m.Index, u.Length, (string)null, u));
+            found.Add(Tuple.Create(from + m.Index, u.Length, (string)null, u));
         }
+        foreach (Match m in PathRe.Matches(part))
+        {
+            if (found.Any(f => m.Index + from < f.Item1 + f.Item2 && f.Item1 < m.Index + from + m.Length)) continue;
+            if (m.Groups[1].Success) { found.Add(Tuple.Create(from + m.Index, m.Length, (string)null, m.Groups[1].Value)); continue; }
+            string p = PathExistsCached(m.Value.TrimEnd('.', ',', ';', ':', '!', '»')) ? m.Value.TrimEnd('.', ',', ';', ':', '!', '»') : m.Value.TrimEnd('.', ',', ';', ':', '!', ')', '»');
+            // a path with spaces ("C:\Users\me\Новая папка") is grown word by word while it still exists on disk
+            int end = m.Index + p.Length;
+            int lineEnd = part.IndexOf('\n', end); if (lineEnd < 0) lineEnd = part.Length;
+            for (int sp = part.IndexOf(' ', end); sp >= 0 && sp < lineEnd; sp = part.IndexOf(' ', sp + 1))
+            {
+                int next = part.IndexOfAny(new[] { ' ', '\n' }, sp + 1); if (next < 0 || next > lineEnd) next = lineEnd;
+                string raw = part.Substring(m.Index, next - m.Index);
+                foreach (var longer in new[] { raw.TrimEnd('.', ',', ';', ':', '!', '»'), raw.TrimEnd('.', ',', ';', ':', '!', ')', '»') })
+                    if (PathExistsCached(longer)) { p = longer; end = m.Index + longer.Length; break; }
+            }
+            if (p.Length > 3) found.Add(Tuple.Create(from + m.Index, p.Length, (string)null, p));
+        }
+        res.AddRange(found.OrderBy(f => f.Item1));
     }
 
-    static Uri ToUri(string url)
+    static readonly Dictionary<string, bool> existsCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+    static bool PathExistsCached(string p)
     {
-        if (url.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) url = "https://" + url;
+        bool e;
+        if (existsCache.TryGetValue(p, out e)) return e;
+        e = PathExists(p);
+        if (existsCache.Count > 500) existsCache.Clear();
+        existsCache[p] = e;
+        return e;
+    }
+
+    static Uri ToUri(string target)
+    {
+        if (IsPath(target)) target = ExpandPath(target);
+        else if (target.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) target = "https://" + target;
         Uri u;
-        return Uri.TryCreate(url, UriKind.Absolute, out u) ? u : null;
+        return Uri.TryCreate(target, UriKind.Absolute, out u) ? u : null;
+    }
+
+    // the original text of a link's target (for a path: as the user wrote it, not file:///...)
+    static string TargetOf(Hyperlink h)
+    {
+        var tag = h.Tag as string;
+        if (tag != null) return tag;
+        return h.NavigateUri == null ? null : (h.NavigateUri.IsFile ? h.NavigateUri.LocalPath : h.NavigateUri.OriginalString);
     }
 
     // read-only display (list rows, previews): formatting + Ctrl+click links
@@ -1067,6 +1186,7 @@ class Sticky : Window
         StyleInline(run, flags);
         var h = new Hyperlink(run) { Foreground = LinkBrush, ToolTip = url + "\nCtrl+клик — открыть, правый клик — показать или переименовать" };
         h.NavigateUri = ToUri(url);
+        h.Tag = url; // the target exactly as written (a path stays a path, not file:///)
         return h;
     }
 
@@ -1141,7 +1261,7 @@ class Sticky : Window
             var tp = rtb.GetPositionFromPoint(pt, false);
             if (tp == null || tp.Paragraph == null) return null;
             var hl = LinkAt(tp);
-            if (hl != null) return hl.NavigateUri != null ? hl.NavigateUri.OriginalString : null;
+            if (hl != null) return TargetOf(hl);
             string text = new TextRange(tp.Paragraph.ContentStart, tp.Paragraph.ContentEnd).Text;
             return UrlAt(text, new TextRange(tp.Paragraph.ContentStart, tp).Text.Length);
         };
@@ -1159,6 +1279,21 @@ class Sticky : Window
         };
         rtb.ContextMenu = new ContextMenu();
         rtb.ContextMenuOpening += (s, e) => { rtb.ContextMenu = FormatMenu(rtb); };
+
+        // drag files or folders from Explorer straight into the text: they become links
+        rtb.AllowDrop = true;
+        rtb.PreviewDragOver += (s, e) =>
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            e.Effects = DragDropEffects.Link; e.Handled = true;
+        };
+        rtb.PreviewDrop += (s, e) =>
+        {
+            var files = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (files == null || files.Length == 0) return;
+            e.Handled = true;
+            InsertPaths(rtb, rtb.GetPositionFromPoint(e.GetPosition(rtb), true), files);
+        };
         return rtb;
     }
 
@@ -1188,15 +1323,15 @@ class Sticky : Window
                 string label = new TextRange(hl.ContentStart, hl.ContentEnd).Text.Replace("[", "(").Replace("]", ")");
                 var firstRun = hl.Inlines.OfType<Run>().FirstOrDefault();
                 if (label.Trim().Length == 0) continue; // the name was erased -> drop the link
-                if (hl.NavigateUri == null)
+                string target = TargetOf(hl);
+                if (target == null)
                 {
                     // never save a link without its address: fall back to the address kept in the tooltip
                     string tip = hl.ToolTip as string;
-                    string keep = tip != null ? tip.Split('\n')[0] : null;
-                    segs.Add(Tuple.Create(keep != null && ToUri(keep) != null ? "[" + label + "](" + keep + ")" : label, firstRun != null ? RunFlags(firstRun, baseWeight) : 0));
-                    continue;
+                    target = tip != null ? tip.Split('\n')[0] : null;
+                    if (target != null && ToUri(target) == null) target = null;
                 }
-                segs.Add(Tuple.Create("[" + label + "](" + hl.NavigateUri.OriginalString + ")", firstRun != null ? RunFlags(firstRun, baseWeight) : 0));
+                segs.Add(Tuple.Create(target != null ? LinkMd(label, target) : label, firstRun != null ? RunFlags(firstRun, baseWeight) : 0));
                 continue;
             }
             var sp = x as Span;
@@ -1271,8 +1406,8 @@ class Sticky : Window
 
     void HideLink(RichTextBox rtb, TextRange range)
     {
-        string url = range.Text.Trim();
-        AskText(rtb, "Как подписать ссылку?", "", label =>
+        string url = range.Text.Trim().Trim('"');
+        AskText(rtb, "Как подписать ссылку?", LabelFor(url), label =>
         {
             range.Text = "";
             InsertLink(range.Start, label, url);
@@ -1282,11 +1417,12 @@ class Sticky : Window
     // The link is built completely (address included) BEFORE it goes into the document:
     // the editor saves on every change, and a link inserted first and given its address
     // afterwards was saved without the address.
-    void InsertLink(TextPointer at, string label, string url)
+    // returns the position right after the inserted link
+    TextPointer InsertLink(TextPointer at, string label, string url)
     {
         var h = EditorLink(label, url, 0);
-        if (h.NavigateUri == null) { new Run(label + " " + url, at); return; }
-        new Span(h, at);
+        if (h.NavigateUri == null) return new Run(label + " " + url, at).ElementEnd;
+        return new Span(h, at).ElementEnd;
     }
 
     void AskText(RichTextBox rtb, string prompt, string initial, Action<string> done)
@@ -1368,11 +1504,12 @@ class Sticky : Window
         Func<string, Action, MenuItem> act = (h, a) => { var mi = new MenuItem { Header = h }; mi.Click += delegate { a(); }; return mi; };
         var hl = LinkAt(rtb.Selection.Start);
         var bare = BareUrlRange(rtb);
-        if (hl != null && hl.NavigateUri != null)
+        if (hl != null && TargetOf(hl) != null)
         {
-            string url = hl.NavigateUri.OriginalString;
+            string url = TargetOf(hl);
             m.Items.Add(new Separator());
             m.Items.Add(act("Открыть ссылку   (Ctrl+клик)", () => OpenUrl(url)));
+            if (IsPath(url)) m.Items.Add(act("Показать в папке", () => ShowInFolder(url)));
             m.Items.Add(act("Переименовать ссылку…", () => AskText(rtb, "Новая подпись ссылки", new TextRange(hl.ContentStart, hl.ContentEnd).Text, label =>
             {
                 hl.Inlines.Clear();
@@ -1383,16 +1520,19 @@ class Sticky : Window
         }
         else if (bare != null)
         {
-            string url = bare.Text.Trim();
+            string url = bare.Text.Trim().Trim('"');
             m.Items.Add(new Separator());
             m.Items.Add(act("Открыть ссылку   (Ctrl+клик)", () => OpenUrl(url)));
+            if (IsPath(url)) m.Items.Add(act("Показать в папке", () => ShowInFolder(url)));
             m.Items.Add(act("Спрятать ссылку под текст…", () => HideLink(rtb, bare)));
         }
         else if (sel)
         {
             string clip = null;
-            try { if (Clipboard.ContainsText()) clip = Clipboard.GetText().Trim(); } catch { }
-            if (clip != null && clip.IndexOfAny(new[] { ' ', '\n' }) < 0 && ToUri(clip) != null && UrlRe.IsMatch(clip))
+            try { if (Clipboard.ContainsText()) clip = Clipboard.GetText().Trim().Trim('"'); } catch { }
+            bool clipOk = clip != null && clip.IndexOf('\n') < 0 && ToUri(clip) != null &&
+                          (IsPath(clip) ? PathExists(clip) : clip.IndexOf(' ') < 0 && UrlRe.IsMatch(clip));
+            if (clipOk)
             {
                 var range = new TextRange(rtb.Selection.Start, rtb.Selection.End);
                 string url = clip;
@@ -1405,7 +1545,31 @@ class Sticky : Window
                 }));
             }
         }
+        m.Items.Add(new Separator());
+        m.Items.Add(act("Прикрепить файл…", () =>
+        {
+            var d = new Microsoft.Win32.OpenFileDialog { Title = "Какой файл прикрепить?", Multiselect = true, CheckFileExists = true };
+            if (d.ShowDialog() == true) InsertPaths(rtb, rtb.CaretPosition, d.FileNames);
+        }));
+        m.Items.Add(act("Прикрепить папку…", () =>
+        {
+            using (var d = new System.Windows.Forms.FolderBrowserDialog { Description = "Какую папку прикрепить?", ShowNewFolderButton = false })
+                if (d.ShowDialog() == System.Windows.Forms.DialogResult.OK) InsertPaths(rtb, rtb.CaretPosition, new[] { d.SelectedPath });
+        }));
         return m;
+    }
+
+    // files/folders become links named after them: "Отчёт.docx", "Курсовая"
+    void InsertPaths(RichTextBox rtb, TextPointer at, string[] paths)
+    {
+        if (at == null) at = rtb.CaretPosition;
+        for (int i = 0; i < paths.Length; i++)
+        {
+            if (i > 0) at = new Run(", ", at).ElementEnd;
+            at = InsertLink(at, LabelFor(paths[i]), paths[i]);
+        }
+        rtb.Focus();
+        rtb.CaretPosition = at;
     }
 
     Grid RichPlaceholder(RichTextBox r, string hint)
@@ -2032,18 +2196,75 @@ class Sticky : Window
         return vk != 0 && mods != 0;
     }
 
-    static bool IsAutostart()
+    // ---------------- autostart ----------------
+    // Programs in the registry "Run" list are started by Explorer late, often several seconds after the
+    // desktop appears. A Task Scheduler task "at log on" starts right away, so the sticker is simply there.
+    // If the task can't be created, the "Run" entry is used as before.
+    const string TaskName = "DeskNotes";
+
+    static int Schtasks(string args)
+    {
+        try
+        {
+            var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("schtasks.exe", args)
+            { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true });
+            p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd();
+            p.WaitForExit(10000);
+            return p.ExitCode;
+        }
+        catch { return -1; }
+    }
+
+    static bool RunKeySet()
     {
         using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue("DeskNotes") != null;
     }
+
+    static bool IsAutostart() { return RunKeySet() || Schtasks("/query /tn " + TaskName) == 0; }
+
+    static bool CreateLogonTask()
+    {
+        string user = Environment.UserDomainName + "\\" + Environment.UserName;
+        string exe = System.Reflection.Assembly.GetExecutingAssembly().Location;
+        string xml =
+            "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n" +
+            "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n" +
+            "  <RegistrationInfo><Description>DeskNotes — стикер на рабочем столе</Description></RegistrationInfo>\r\n" +
+            "  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + SecurityElement(user) + "</UserId></LogonTrigger></Triggers>\r\n" +
+            "  <Principals><Principal id=\"Author\"><UserId>" + SecurityElement(user) + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\r\n" +
+            "  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" +
+            "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>5</Priority>" +
+            "<AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled></Settings>\r\n" +
+            "  <Actions Context=\"Author\"><Exec><Command>" + SecurityElement(exe) + "</Command></Exec></Actions>\r\n" +
+            "</Task>\r\n";
+        string file = IOPath.Combine(IOPath.GetTempPath(), "DeskNotes-task.xml");
+        try
+        {
+            IOFile.WriteAllText(file, xml, Encoding.Unicode);
+            return Schtasks("/create /tn " + TaskName + " /xml \"" + file + "\" /f") == 0;
+        }
+        catch { return false; }
+        finally { try { IOFile.Delete(file); } catch { } }
+    }
+
+    static string SecurityElement(string s) { return System.Security.SecurityElement.Escape(s); }
 
     static void SetAutostart(bool on)
     {
         using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
         {
+            if (on && CreateLogonTask()) { k.DeleteValue("DeskNotes", false); return; }
             if (on) k.SetValue("DeskNotes", "\"" + System.Reflection.Assembly.GetExecutingAssembly().Location + "\"");
-            else k.DeleteValue("DeskNotes", false);
+            else { k.DeleteValue("DeskNotes", false); Schtasks("/delete /tn " + TaskName + " /f"); }
         }
+    }
+
+    // the installer writes the old "Run" entry; the app quietly moves it to the faster logon task once
+    static void MigrateAutostart()
+    {
+        if (!RunKeySet()) return;
+        if (CreateLogonTask())
+            using (var k = Registry.CurrentUser.CreateSubKey(RunKey)) k.DeleteValue("DeskNotes", false);
     }
 }
 
