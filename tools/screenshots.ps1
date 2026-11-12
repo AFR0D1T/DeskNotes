@@ -28,9 +28,8 @@ $data = Join-Path $env:APPDATA "DeskNotes"
 if ((Test-Path (Join-Path $data "data.json")) -and -not $Force) { throw "$data\data.json exists: this would overwrite real notes. Use -Force on a spare account." }
 New-Item -ItemType Directory -Force $data, (Join-Path $data "fonts"), $Out | Out-Null
 
-# the handwriting font the sticker uses by default (Google Fonts, OFL)
-$font = Join-Path $data "fonts\Caveat.ttf"
-if (-not (Test-Path $font)) { Invoke-WebRequest "https://raw.githubusercontent.com/google/fonts/main/ofl/caveat/Caveat%5Bwght%5D.ttf" -OutFile $font }
+# the handwriting font, as the installer puts it
+Copy-Item (Join-Path $PSScriptRoot "..\assets\fonts\Caveat.ttf") (Join-Path $data "fonts\Caveat.ttf") -Force
 
 # plain desk-coloured background instead of the wallpaper
 [DN.W]::SystemParametersInfo(0x14, 0, "", 3) | Out-Null
