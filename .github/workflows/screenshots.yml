@@ -1,0 +1,22 @@
+# Builds DeskNotes, runs it with demo notes and saves README screenshots plus measured resource use.
+# Start it by hand from the Actions tab; download the "screenshots" artifact when it finishes.
+name: Screenshots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        shell: powershell
+        run: .\build.ps1
+      - name: Screenshots and measurements
+        shell: powershell
+        run: .\tools\screenshots.ps1 -Out "$env:RUNNER_TEMP\shots"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/shots
