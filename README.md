@@ -1,160 +1,144 @@
 # DeskNotes
 
-Рисованный стикер прямо на рабочем столе Windows: дела, заметки и рисунки от руки. Он всегда под рукой,
-никогда не мешает и в простое не тратит ни капли процессора.
+[Русский](README.ru.md) · **English**
 
 <p align="center">
-  <img src="docs/screenshot-tasks.png" width="32%" alt="Список дел с цветными метками">
-  <img src="docs/screenshot-notes.png" width="32%" alt="Заметки на жёлтом стикере">
-  <img src="docs/screenshot-drawing.png" width="32%" alt="Рисунок от руки">
+  <img src="docs/live-desktop.png" width="100%" alt="DeskNotes sticky on a Windows desktop among folders and shortcuts">
 </p>
 
-**[⬇ Скачать DeskNotes-Setup.exe](https://github.com/AFR0D1T/DeskNotes/releases/latest/download/DeskNotes-Setup.exe)** · Windows 10/11 · около 0,5 МБ · без прав администратора
+<p align="center">
+  <img src="docs/screenshot-tasks.png" width="32%" alt="To-do list with colored labels">
+  <img src="docs/screenshot-notes.png" width="32%" alt="Notes on a yellow sticky">
+  <img src="docs/screenshot-drawing.png" width="32%" alt="Hand-drawn sketch">
+</p>
 
-## Что умеет
+<details>
+<summary>What it looks like in use</summary>
 
-**Стикер на рабочем столе**
-- Живёт на рабочем столе под всеми окнами, как настоящая бумажка.
-- **Ctrl+Alt+N** достаёт его поверх всего, **Esc** убирает обратно и возвращает фокус туда, где ты был.
-- Нет значка на панели задач и в трее, не попадает в Alt+Tab.
-- По умолчанию не виден в записи экрана, на стримах и в демонстрации экрана (можно выключить).
+![Sticky next to a code editor](docs/live-tasks.png)
+![Notes next to a projects folder](docs/live-notes.png)
+![Evening, the drawings tab](docs/live-drawing.png)
 
-**Дела и заметки**
-- Вкладки: списки дел с галочками, заметки, рисунки. «+» добавляет новую, двойной клик переименовывает, правый клик меняет тип, порядок и удаляет.
-- Клик по записи раскрывает подробности: текст, подпункты с галочками, дата создания.
-- Пять цветных меток. Метка показывается цветным текстом, маркером или точкой, цвета настраиваются.
-- Форматирование текста: жирный, курсив, зачёркнутый, подчёркнутый и маркер. Выдели текст и нажми правую кнопку, либо **Ctrl+Shift+X** (зачеркнуть) и **Ctrl+Shift+H** (маркер).
-- Ссылки на сайты, файлы и папки открываются по **Ctrl+клику**. Понимает пути `C:\...`, `"C:\Program Files\..."`, `\\сервер\папка`, `%USERPROFILE%\...`. Длинную ссылку можно спрятать под коротким названием.
-- Файлы и папки можно перетащить из Проводника прямо на стикер или прикрепить через правый клик → «Прикрепить файл… / папку…».
-- Удалил лишнее? **Ctrl+Z** вернёт.
+</details>
 
-**Голосовой ввод, полностью офлайн**
-- Микрофон или **Ctrl+M**. Каждая пауза становится отдельным делом, фраза «Запомни…» уходит в заметки.
-- Пауза в 3 секунды, Enter или повторный клик заканчивают диктовку.
-- Распознавание работает на твоём компьютере ([Vosk](https://alphacephei.com/vosk/)), в интернет ничего не уходит.
+A small sticky note for the Windows desktop: to-dos, notes and hand drawings.
 
-**Рисунки**
-- Рисуй мышкой или пером: шесть цветов, три толщины, ластик, «очистить», **Ctrl+Z** отменяет штрих.
-- Лёгкое сглаживание линий, его силу можно выбрать.
+Made it for myself. I wanted a plain piece of paper on the desktop, so I could jot something down and not lose it among ten browser tabs. Everything I found either dragged a whole browser along (hi, Electron) or sat in the tray doing something all the time. A sticky that eats CPU while idle annoyed me most. So I wrote my own: one `.exe`, 116 KB, 0 ms of CPU when idle. I didn't believe it either, so the measurements are below.
 
-**Внешний вид (меню ⋯)**
-- Бумага: графитовая и школьная доска, ночная, жёлтый стикер, розовый, голубой, мятный, белый лист, крафт или свой цвет.
-- Чернила: мел, графит, синяя ручка, коричневые, бордо или свой цвет.
-- Почерк: Caveat (ставится вместе с программой), рукописные шрифты Windows или свой `.ttf` в папке `fonts`.
-- Размер текста, наклон стикера, тень, крепление (кнопка, скотч, скрепка или без него).
+**[Download DeskNotes-Setup.exe](https://github.com/AFR0D1T/DeskNotes/releases/latest/download/DeskNotes-Setup.exe)** · Windows 10/11 · about 0.5 MB · no admin rights needed
 
-### Горячие клавиши
+## What it does
 
-| Клавиши | Что делают |
+The sticky lives on the desktop under all other windows, like a real piece of paper. **Ctrl+Alt+N** pulls it up on top of everything, **Esc** sends it back and returns focus to where you were. It's not on the taskbar, not in the tray, not in Alt+Tab. In screen recordings and streams it's hidden by default (you can turn that off).
+
+Inside there are tabs of three kinds: to-do lists with checkboxes, notes and drawings. "+" adds a new one, double click renames, right click changes the type, the order, and deletes. Click an item to expand it: text, subitems, creation date. There are five color labels (colored text, highlighter or a dot, and you can change the colors). Deleted something by mistake? **Ctrl+Z** brings it back.
+
+You can do a few things with text:
+- bold, italic, strikethrough, underline and highlighter: select the text and right click, or use **Ctrl+Shift+X** (strikethrough) and **Ctrl+Shift+H** (highlighter);
+- links to websites, files and folders open with **Ctrl+click**; it understands paths like `C:\...`, `"C:\Program Files\..."`, `\\server\folder`, `%USERPROFILE%\...`, and a long link can be hidden behind a short title;
+- drag a file or folder from Explorer straight onto the sticky, or attach it with right click → "Attach file… / folder…".
+
+Voice input works fully offline. Click the microphone or press **Ctrl+M** and dictate: every pause becomes a separate to-do, and the phrase «Запомни…» ("Remember…") sends what follows to notes. To finish, pause for 3 seconds, press Enter or click again. Recognition is done by [Vosk](https://alphacephei.com/vosk/) right on your computer, nothing goes to the internet. One catch: right now it uses the Russian model (`vosk-model-small-ru-0.22`), so it recognizes Russian speech, and that's also why the trigger phrase is in Russian.
+
+You can draw with a mouse or a pen: six colors, three thicknesses, an eraser, "clear", and **Ctrl+Z** undoes a stroke. Lines get smoothed a little, and you can pick how much.
+
+Looks are configured in the ⋯ menu:
+- paper: graphite and school chalkboard, night, yellow sticky, pink, light blue, mint, white sheet, kraft or your own color;
+- ink: chalk, graphite, blue pen, brown, burgundy or your own color;
+- handwriting: Caveat (installed with the program), Windows handwriting fonts or your own `.ttf` in the `fonts` folder;
+- text size, tilt of the sticky, shadow and attachment (button, tape, paper clip or none).
+
+### Hotkeys
+
+| Keys | What they do |
 |---|---|
-| Ctrl+Alt+N | достать стикер / убрать обратно |
-| Esc | закрыть подробности, иначе убрать стикер |
-| Ctrl+N | к полю новой записи |
-| Ctrl+M | голосовой ввод |
-| Ctrl+Tab, Ctrl+Shift+Tab | следующая / предыдущая вкладка |
-| Ctrl+1 … Ctrl+9 | вкладка по номеру |
-| Ctrl+Z | вернуть удалённое, в рисунке отменить штрих |
-| Ctrl+клик | открыть ссылку, файл или папку |
-| Ctrl+Shift+X / Ctrl+Shift+H | зачеркнуть / выделить маркером |
+| Ctrl+Alt+N | pull up the sticky / put it back |
+| Esc | close the details, otherwise put the sticky away |
+| Ctrl+N | jump to the new item field |
+| Ctrl+M | voice input |
+| Ctrl+Tab, Ctrl+Shift+Tab | next / previous tab |
+| Ctrl+1 … Ctrl+9 | tab by number |
+| Ctrl+Z | restore deleted items, undo a stroke in a drawing |
+| Ctrl+click | open a link, file or folder |
+| Ctrl+Shift+X / Ctrl+Shift+H | strikethrough / highlighter |
 
-## Установка
+## Installation
 
-Скачай [DeskNotes-Setup.exe](https://github.com/AFR0D1T/DeskNotes/releases/latest/download/DeskNotes-Setup.exe) из [последнего релиза](https://github.com/AFR0D1T/DeskNotes/releases/latest) и запусти.
+Download [DeskNotes-Setup.exe](https://github.com/AFR0D1T/DeskNotes/releases/latest/download/DeskNotes-Setup.exe) from the [latest release](https://github.com/AFR0D1T/DeskNotes/releases/latest) and run it.
 
-- Права администратора не нужны, программа ставится в `%LOCALAPPDATA%\Programs\DeskNotes`.
-- Галочки: голосовой ввод (скачает около 60 МБ для офлайн-распознавания, файлы проверяются по контрольной сумме), автозапуск, ярлык в «Пуске».
-- Повторный запуск установщика обновляет программу, записи при этом не трогаются.
-- Удаление: «Параметры → Приложения → DeskNotes → Удалить». Установщик спросит, удалять ли записи.
-- Установка без окна: `DeskNotes-Setup.exe /silent [/novoice] [/noautostart] [/nomenu]`.
+- No admin rights needed, it installs to `%LOCALAPPDATA%\Programs\DeskNotes`.
+- The installer has three checkboxes: voice input (downloads about 60 MB for offline recognition, files are verified by checksum), autostart and a Start menu shortcut.
+- Running the installer again updates the program. Your notes are not touched.
+- To remove it, go to Settings → Apps → DeskNotes → Uninstall. The installer will ask whether to delete your notes.
+- Silent install: `DeskNotes-Setup.exe /silent [/novoice] [/noautostart] [/nomenu]`.
 
-У установщика нет цифровой подписи, поэтому Windows SmartScreen может предупредить о неизвестном издателе. Нажми «Подробнее → Выполнить в любом случае».
+The installer isn't digitally signed, so SmartScreen may complain about an unknown publisher. Click "More info → Run anyway".
 
-## Нагрузка на компьютер
+## Why it doesn't eat resources
 
-Главное требование к DeskNotes: стикер висит весь день, а компьютер этого не замечает. Цифры ниже измерены
-автоматически: [`tools/screenshots.ps1`](tools/screenshots.ps1) запускает программу на чистой Windows в GitHub Actions
-и минуту наблюдает за ней в простое.
+I didn't make these numbers up. [`tools/screenshots.ps1`](tools/screenshots.ps1) launches the program on a clean Windows machine in GitHub Actions and watches what it does while idle for a minute.
 
 | | |
 |---|---|
-| Процессор в простое | **0 мс за 60 секунд** (ровно ноль) |
-| Память (личная) | около 37 МБ |
-| Память в Диспетчере задач (рабочий набор) | около 22 МБ |
-| Видеокарта | не используется совсем |
-| Диск в простое | ни одной записи |
-| Приоритет в фоне | самый низкий (Idle) + «режим эффективности» Windows 11 |
-| Размер программы | 116 КБ, один `.exe` |
-| Запуск | около 0,3 с на обычном компьютере |
+| CPU when idle | 0 ms in 60 seconds (exactly zero) |
+| Memory (private) | about 37 MB |
+| Memory in Task Manager (working set) | about 22 MB |
+| GPU | not used at all |
+| Disk when idle | no writes |
+| Background priority | lowest (Idle) + Windows 11 "efficiency mode" |
+| Program size | 116 KB, a single `.exe` |
+| Startup | about 0.3 s on an ordinary computer |
 
-### Как это сделано
+How it came out that way, in short:
 
-**Ничего не происходит, пока ты ничего не делаешь**
-- Нет таймеров, опросов и анимаций в фоне. Программа просыпается только на события: нажатие клавиш, клик, горячая клавиша.
-- Свёрнутый стикер переходит на самый низкий приоритет и в «режим эффективности» (EcoQoS) Windows 11, поэтому никогда не конкурирует с играми, браузером или работой. Когда стикер открываешь, приоритет становится обычным, и набор текста не тормозит.
-- Отдельный поток для фоновой сборки мусора .NET отключён: для стикера он не нужен, и в процессе на один поток меньше.
+- **While you do nothing, nothing happens.** No timers, no polling, no background animations. The program wakes up only on an event: a key, a click, a hotkey.
+- **A minimized sticky drops to the lowest priority** and into Windows 11 "efficiency mode" (EcoQoS), so it doesn't compete with games or the browser. When you open the sticky, the priority goes back to normal so typing doesn't lag.
+- **It draws on the CPU, no GPU needed at all.** The paper shadow is built from several semi-transparent layers instead of a blur: with software rendering a blur would be recalculated on every keypress. Brushes and shapes are created once, context menus are built only when opened.
+- **Disk writes are rare.** Saving is delayed by 0.7 seconds after the last edit, and if nothing changed, nothing is written. A drawing is encoded once before saving, not after every stroke. The file is written to a temporary one and then replaces the old one, so your notes survive even if the power goes out.
+- **The speech recognition model** takes about 400 MB of memory, so it's loaded only when you click the microphone and unloaded a minute after dictation. The recording thread also lives only while recording.
+- **No spare memory hanging around.** After startup and after dictation it's handed back to the system. I deliberately don't do this on every minimize: otherwise the next Ctrl+Alt+N would open more slowly.
+- **Nothing to hang the sticky on.** Links in the text are not checked on network drives and `\\server\...` paths, so a switched-off server won't freeze it. File existence checks are cached, and the autostart state is remembered instead of asking Task Scheduler every time the menu opens.
+- **Starts fast.** Autostart goes through Task Scheduler "at log on", not through the "Run" list, which Windows launches with a delay. A second instance is never created.
+- **Written in C# on .NET Framework 4.8**, which is already built into Windows 10/11, so there's nothing to install. No embedded browser, hence the 116 KB. I turned off the separate background garbage collection thread of .NET: the sticky doesn't need it, and that's one thread less.
 
-**Дешёвая отрисовка**
-- Отрисовка только программная, видеокарта не используется вообще: стикер не будит GPU и не мешает играм.
-- Тень бумаги собрана из нескольких полупрозрачных слоёв, а не из эффекта размытия. Размытие при программной отрисовке пересчитывалось бы на каждое нажатие клавиши, а слои почти ничего не стоят.
-- Фигуры (галочки, рамки, подчёркивания) и кисти создаются один раз и переиспользуются. Контекстные меню собираются, только когда их действительно открывают.
+## Where your notes are stored
 
-**Диск: только когда нужно**
-- Сохранение откладывается на 0,7 секунды после последнего изменения, а не происходит на каждую букву. Если ничего не менялось, на диск не пишется ничего.
-- Рисунок кодируется один раз, прямо перед сохранением, а не после каждого штриха.
-- Файл записывается целиком во временный и потом подменяет старый, поэтому записи не испортятся, даже если выключится свет.
+In `%APPDATA%\DeskNotes`:
+- `data.json`: tabs, to-dos, notes and drawings;
+- `settings.json`: looks, position and size of the sticky;
+- `fonts\`: handwriting fonts (put your own `.ttf` here);
+- `vosk\`: voice input, if installed.
 
-**Память**
-- Модель распознавания речи (около 400 МБ в памяти) загружается только при нажатии на микрофон и выгружается через минуту после диктовки. Поток записи существует, только пока идёт запись.
-- После запуска и после диктовки неиспользуемая память возвращается системе. При каждом сворачивании этого не делается специально, иначе следующее Ctrl+Alt+N открывалось бы медленнее.
+You can open the folder from the ⋯ menu → "Open data folder". Before an update via `build.ps1 -Install`, a copy `data.backup.json` is made.
 
-**Никаких неожиданных задержек**
-- Распознавание ссылок в тексте никогда не обращается к сетевым дискам и путям `\\сервер\...`: медленный или выключенный сервер не может подвесить стикер.
-- Проверки существования файлов кэшируются, шрифты проверяются точечно, без перебора всех установленных.
-- Состояние автозапуска запоминается, а не спрашивается у Планировщика заданий при каждом открытии меню.
+## Building from source
 
-**Быстрый старт**
-- Автозапуск идёт через Планировщик заданий «при входе в систему», а не через список «Run», который Windows запускает с задержкой. Стикер появляется вместе с рабочим столом.
-- Программа написана на C# под .NET Framework 4.8, который уже встроен в Windows 10/11. Ничего не нужно доустанавливать, нет тяжёлого встроенного браузера (как в Electron), и весь стикер помещается в 116 КБ.
-- Повторный запуск не создаёт вторую копию.
-
-## Где хранятся записи
-
-`%APPDATA%\DeskNotes`:
-- `data.json` — вкладки, дела, заметки и рисунки;
-- `settings.json` — внешний вид, положение и размер стикера;
-- `fonts\` — шрифты для почерка (сюда можно положить свой `.ttf`);
-- `vosk\` — голосовой ввод, если он установлен.
-
-Открыть эту папку можно из меню ⋯ → «Открыть папку с данными». Перед обновлением через `build.ps1 -Install` делается копия `data.backup.json`.
-
-## Сборка из исходников
-
-Нужна только Windows 10/11: компилятор C# уже есть в системе, ставить ничего не надо.
+You only need Windows 10/11: the C# compiler is already in the system, nothing to install.
 
 ```powershell
-.\build.ps1            # собрать bin\DeskNotes.exe и bin\DeskNotes-Setup.exe
-.\build.ps1 -Install   # собрать и заменить установленную копию
-.\build.ps1 -Release   # собрать и выложить установщик в GitHub Releases (нужен gh)
+.\build.ps1            # build bin\DeskNotes.exe and bin\DeskNotes-Setup.exe
+.\build.ps1 -Install   # build and replace the installed copy
+.\build.ps1 -Release   # build and publish the installer to GitHub Releases (needs gh)
 ```
 
-Новую версию можно выпустить и без своего компьютера: поменяй номер версии в `installer/Setup.cs` и `DeskNotes.cs`, затем открой вкладку **Actions → Release → Run workflow**. GitHub соберёт установщик на Windows и опубликует релиз.
+A new version can also be released without my computer: change the version number in `installer/Setup.cs` and `DeskNotes.cs`, then open **Actions → Release → Run workflow**. GitHub builds the installer on Windows and publishes the release.
 
-Скриншоты в этом README обновляются через **Actions → Screenshots → Run workflow**: программа запускается с демо-записями, а картинки и замеры попадают в ветку `screenshots`.
+The pictures in the README and the load measurements are updated via **Actions → Screenshots → Run workflow**: the program is launched with demo notes, and the results land in the `screenshots` branch.
 
-### Что где лежит
+### What's where
 
-| Файл | Что это |
+| File | What it is |
 |---|---|
-| `DeskNotes.cs` | вся программа, один файл |
-| `installer/Setup.cs` | установщик и удаление |
-| `build.ps1` | сборка, установка, релиз |
-| `assets/` | иконка и шрифт Caveat |
-| `tools/screenshots.ps1` | скриншоты и замеры нагрузки на демо-данных |
-| `tools/measure-startup.ps1` | замер времени запуска на своём компьютере |
-| `tools/make-icon.ps1` | рисует иконку `assets/icon.ico` |
-| `docs/` | скриншоты для README |
+| `DeskNotes.cs` | the whole program, one file |
+| `installer/Setup.cs` | installer and uninstaller |
+| `build.ps1` | build, install, release |
+| `assets/` | icon and the Caveat font |
+| `tools/screenshots.ps1` | screenshots and load measurements on demo data |
+| `tools/measure-startup.ps1` | startup time measurement on your own computer |
+| `tools/make-icon.ps1` | draws the icon `assets/icon.ico` |
+| `docs/` | pictures for the README |
 
-## Сторонние компоненты
+## Third-party components
 
-- Шрифт [Caveat](https://github.com/googlefonts/caveat), лицензия SIL Open Font License 1.1 (`assets/fonts/OFL.txt`).
-- Голосовой ввод: [Vosk](https://alphacephei.com/vosk/) и модель `vosk-model-small-ru-0.22` (Apache 2.0). Скачиваются установщиком и в репозиторий не входят.
+- The [Caveat](https://github.com/googlefonts/caveat) font, SIL Open Font License 1.1 (`assets/fonts/OFL.txt`).
+- Voice input: [Vosk](https://alphacephei.com/vosk/) and the `vosk-model-small-ru-0.22` model (Apache 2.0), which is a Russian-language model. Downloaded by the installer and not included in the repository.
